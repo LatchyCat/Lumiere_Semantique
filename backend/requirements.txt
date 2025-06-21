@@ -1,0 +1,19 @@
+# Django Core
+Django
+djangorestframework
+
+# LLM & Vector Database
+ollama
+faiss-cpu
+numpy
+tqdm
+
+# Web Scraping (Legacy, but keep for now)
+requests
+beautifulsoup4
+
+# GitHub API Client
+PyGithub
+
+# --- NEW: For loading .env files ---
+python-dotenv

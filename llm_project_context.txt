@@ -1,0 +1,3220 @@
+--- PROJECT STRUCTURE ---
+/Users/latchy/lumiere_semantique
+├── .gitignore
+├── backend
+│   ├── .env
+│   ├── api
+│   │   ├── __init__.py
+│   │   ├── admin.py
+│   │   ├── apps.py
+│   │   ├── migrations
+│   │   │   └── __init__.py
+│   │   ├── models.py
+│   │   ├── tests.py
+│   │   ├── urls.py
+│   │   └── views.py
+│   ├── db.sqlite3
+│   ├── expressjs_express_cortex.json
+│   ├── expressjs_express_faiss.index
+│   ├── expressjs_express_id_map.json
+│   ├── ingestion
+│   │   ├── __init__.py
+│   │   ├── admin.py
+│   │   ├── apps.py
+│   │   ├── crawler.py
+│   │   ├── indexing.py
+│   │   ├── jsonifier.py
+│   │   ├── management
+│   │   │   ├── __init__.py
+│   │   │   └── commands
+│   │   │       ├── __init__.py
+│   │   │       ├── generate_briefing.py
+│   │   │       ├── run_crawler.py
+│   │   │       ├── run_indexer.py
+│   │   │       └── search.py
+│   │   ├── migrations
+│   │   │   └── __init__.py
+│   │   ├── models.py
+│   │   ├── tests.py
+│   │   └── views.py
+│   ├── LatchyCat_lumiere-ambassador-test-target_cortex.json
+│   ├── LatchyCat_lumiere-ambassador-test-target_faiss.index
+│   ├── LatchyCat_lumiere-ambassador-test-target_id_map.json
+│   ├── lumiere_core
+│   │   ├── __init__.py
+│   │   ├── .env
+│   │   ├── .gitignore
+│   │   ├── asgi.py
+│   │   ├── services
+│   │   │   ├── __init__.py
+│   │   │   ├── ambassador.py
+│   │   │   ├── documentation.py
+│   │   │   ├── github.py
+│   │   │   ├── llm.py
+│   │   │   ├── ollama.py
+│   │   │   ├── profile_service.py
+│   │   │   ├── review_service.py
+│   │   │   ├── scaffolding.py
+│   │   │   ├── strategist.py
+│   │   │   ├── testing.py
+│   │   │   └── utils.py
+│   │   ├── settings.py
+│   │   ├── urls.py
+│   │   └── wsgi.py
+│   ├── manage.py
+│   ├── pallets_flask_cortex.json
+│   ├── pallets_flask_faiss.index
+│   ├── pallets_flask_id_map.json
+│   ├── psf_requests_faiss.index
+│   ├── psf_requests_id_map.json
+│   ├── requirements.txt
+│   ├── run_server.sh
+│   ├── tensorflow_tensorflow_cortex.json
+│   ├── tensorflow_tensorflow_faiss.index
+│   ├── tensorflow_tensorflow_id_map.json
+│   ├── urllib3_urllib3_cortex.json
+│   ├── urllib3_urllib3_faiss.index
+│   └── urllib3_urllib3_id_map.json
+├── crawler.sh
+├── llm_project_context.txt
+└── README.md
+
+10 directories, 69 files
+
+--- END PROJECT STRUCTURE ---
+
+
+--- FILE_START: backend/LatchyCat_lumiere-ambassador-test-target_cortex.json ---
+{
+  "repo_id": "LatchyCat_lumiere-ambassador-test-target",
+  "last_crawled_utc": "2025-06-21T04:56:49.323946+00:00",
+  "project_health_score": 0.0,
+  "project_structure_tree": "...",
+  "github_metadata": {},
+  "files": [
+    {
+      "file_path": "requirements.txt",
+      "file_size_kb": 0.02,
+      "raw_content": "requests==2.28.0\n",
+      "code_smells": [],
+      "ast_summary": "{}",
+      "text_chunks": [
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_requirements.txt_0",
+          "chunk_text": "requests==2.28.0\n",
+          "token_count": 1,
+          "chunk_type": "paragraph"
+        }
+      ]
+    },
+    {
+      "file_path": "test_calculator.py",
+      "file_size_kb": 0.42,
+      "raw_content": "# In lumiere-ambassador-test-target/test_calculator.py\n\nfrom calculator import add, subtract, multiply\n\ndef test_add():\n    \"\"\"Tests the add function.\"\"\"\n    assert add(2, 3) == 5\n\ndef test_subtract():\n    \"\"\"\n    Tests the subtract function.\n    THIS TEST WILL FAIL due to the bug in subtract().\n    \"\"\"\n    assert subtract(5, 2) == 3\n\ndef test_multiply():\n    \"\"\"Tests the multiply function.\"\"\"\n    assert multiply(3, 4) == 12\n",
+      "code_smells": [],
+      "ast_summary": "{}",
+      "text_chunks": [
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_test_calculator.py_0",
+          "chunk_text": "def test_add():\n    \"\"\"Tests the add function.\"\"\"\n    assert add(2, 3) == 5",
+          "token_count": 11,
+          "chunk_type": "function_definition"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_test_calculator.py_1",
+          "chunk_text": "def test_subtract():\n    \"\"\"\n    Tests the subtract function.\n    THIS TEST WILL FAIL due to the bug in subtract().\n    \"\"\"\n    assert subtract(5, 2) == 3",
+          "token_count": 23,
+          "chunk_type": "function_definition"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_test_calculator.py_2",
+          "chunk_text": "def test_multiply():\n    \"\"\"Tests the multiply function.\"\"\"\n    assert multiply(3, 4) == 12",
+          "token_count": 11,
+          "chunk_type": "function_definition"
+        }
+      ]
+    },
+    {
+      "file_path": "README.md",
+      "file_size_kb": 1.66,
+      "raw_content": "# lumiere-ambassador-test-target\nTest Environment Setup \n\nThe Ambassador - Automated Pull Request (PR) Agent\nWhat it is: The final step in fulfilling your core mission. This agent would chain together several of your existing services to not only generate a fix but to package it and formally submit it as a Pull Request to the original GitHub repository.\nWhy it aligns with our philosophy: This represents the pinnacle of a \"data-reactive system that...interacts with code on a near-human level.\" It closes the loop from analysis (briefing) to implementation (scaffold, generate-tests) to contribution. It takes the semantic understanding of the code and translates it into a tangible, collaborative action within the open-source community.\nHow it would work (High-Level):\nWorkflow Orchestration: This would be a new \"workflow\" service that calls your existing services in sequence.\nGenerate The Fix: It would first run the briefing, scaffold, and generate-tests agents to produce the necessary code modifications and new test files.\nLocal Git Operations: Using the IntelligentCrawler and Python's subprocess module, it would:\nClone the repository.\nCreate a new branch (e.g., lumiere-fix/issue-123).\nWrite the modified and new files to the local filesystem.\nCommit & Push: Use an LLM to generate a structured commit message based on the original issue. Then, use git commands to add, commit, and push the new branch to a user's fork of the repository.\nCreate Pull Request: Finally, it would use the PyGithub library to open a pull request from the new branch on the fork to the main branch of the upstream repository. The PR description would be pre-filled with the \"Pre-flight Briefing\" report.\n",
+      "code_smells": [],
+      "ast_summary": "{}",
+      "text_chunks": [
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_README.md_0",
+          "chunk_text": "# lumiere-ambassador-test-target\nTest Environment Setup ",
+          "token_count": 5,
+          "chunk_type": "paragraph"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_README.md_1",
+          "chunk_text": "The Ambassador - Automated Pull Request (PR) Agent\nWhat it is: The final step in fulfilling your core mission. This agent would chain together several of your existing services to not only generate a fix but to package it and formally submit it as a Pull Request to the original GitHub repository.\nWhy it aligns with our philosophy: This represents the pinnacle of a \"data-reactive system that...interacts with code on a near-human level.\" It closes the loop from analysis (briefing) to implementation (scaffold, generate-tests) to contribution. It takes the semantic understanding of the code and translates it into a tangible, collaborative action within the open-source community.\nHow it would work (High-Level):\nWorkflow Orchestration: This would be a new \"workflow\" service that calls your existing services in sequence.\nGenerate The Fix: It would first run the briefing, scaffold, and generate-tests agents to produce the necessary code modifications and new test files.\nLocal Git Operations: Using the IntelligentCrawler and Python's subprocess module, it would:\nClone the repository.\nCreate a new branch (e.g., lumiere-fix/issue-123).\nWrite the modified and new files to the local filesystem.\nCommit & Push: Use an LLM to generate a structured commit message based on the original issue. Then, use git commands to add, commit, and push the new branch to a user's fork of the repository.\nCreate Pull Request: Finally, it would use the PyGithub library to open a pull request from the new branch on the fork to the main branch of the upstream repository. The PR description would be pre-filled with the \"Pre-flight Briefing\" report.\n",
+          "token_count": 258,
+          "chunk_type": "paragraph"
+        }
+      ]
+    },
+    {
+      "file_path": "calculator.py",
+      "file_size_kb": 0.36,
+      "raw_content": "# In lumiere-ambassador-test-target/calculator.py\n\ndef add(a, b):\n    \"\"\"Correctly adds two numbers.\"\"\"\n    return a + b\n\ndef subtract(a, b):\n    \"\"\"\n    This function is supposed to subtract two numbers,\n    but it contains a bug.\n    \"\"\"\n    # BUG: This should be a - b\n    return a + b\n\ndef multiply(a, b):\n    \"\"\"Correctly multiplies two numbers.\"\"\"\n    return a * b\n",
+      "code_smells": [],
+      "ast_summary": "{}",
+      "text_chunks": [
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_calculator.py_0",
+          "chunk_text": "def add(a, b):\n    \"\"\"Correctly adds two numbers.\"\"\"\n    return a + b",
+          "token_count": 11,
+          "chunk_type": "function_definition"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_calculator.py_1",
+          "chunk_text": "def subtract(a, b):\n    \"\"\"\n    This function is supposed to subtract two numbers,\n    but it contains a bug.\n    \"\"\"\n    # BUG: This should be a - b\n    return a + b",
+          "token_count": 30,
+          "chunk_type": "function_definition"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_calculator.py_2",
+          "chunk_text": "def multiply(a, b):\n    \"\"\"Correctly multiplies two numbers.\"\"\"\n    return a * b",
+          "token_count": 11,
+          "chunk_type": "function_definition"
+        }
+      ]
+    },
+    {
+      "file_path": "api_client.py",
+      "file_size_kb": 1.05,
+      "raw_content": "# In lumiere-ambassador-test-target/api_client.py\n\nimport requests\nimport json\n\ndef get_cat_fact():\n    \"\"\"\n    Fetches a random cat fact from a public API.\n\n    This function has a bug related to how the API is called.\n    \"\"\"\n    url = \"https://catfact.ninja/fact\"\n    try:\n        # BUG: The 'timeout' parameter should be a number (e.g., 5), not a string.\n        # This will cause a TypeError when the requests library processes it.\n        response = requests.get(url, timeout=\"5 seconds\")\n        response.raise_for_status()\n        fact_data = response.json()\n        return fact_data.get(\"fact\")\n    except requests.exceptions.RequestException as e:\n        return f\"Error fetching cat fact: {e}\"\n    except TypeError as e:\n        # The bug will trigger this exception path.\n        return f\"A TypeError occurred: {e}\"\n\nTraceback (most recent call last):\nFile \"<stdin>\", line 1, in <module>\nFile \"/app/api_client.py\", line 14, in get_cat_fact\nresponse = requests.get(url, timeout=\"5 seconds\")\n...\nTypeError: timeout value must be a float or a tuple, not <class 'str'>\n",
+      "code_smells": [],
+      "ast_summary": "{}",
+      "text_chunks": [
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_0",
+          "chunk_text": "# In lumiere-ambassador-test-target/api_client.py",
+          "token_count": 3,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_1",
+          "chunk_text": "import requests",
+          "token_count": 2,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_2",
+          "chunk_text": "import json",
+          "token_count": 2,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_3",
+          "chunk_text": "def get_cat_fact():",
+          "token_count": 2,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_4",
+          "chunk_text": "    \"\"\"",
+          "token_count": 1,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_5",
+          "chunk_text": "    Fetches a random cat fact from a public API.",
+          "token_count": 9,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_6",
+          "chunk_text": "    This function has a bug related to how the API is called.",
+          "token_count": 12,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_7",
+          "chunk_text": "    \"\"\"",
+          "token_count": 1,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_8",
+          "chunk_text": "    url = \"https://catfact.ninja/fact\"",
+          "token_count": 3,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_9",
+          "chunk_text": "    try:",
+          "token_count": 1,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_10",
+          "chunk_text": "        # BUG: The 'timeout' parameter should be a number (e.g., 5), not a string.",
+          "token_count": 14,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_11",
+          "chunk_text": "        # This will cause a TypeError when the requests library processes it.",
+          "token_count": 12,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_12",
+          "chunk_text": "        response = requests.get(url, timeout=\"5 seconds\")",
+          "token_count": 5,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_13",
+          "chunk_text": "        response.raise_for_status()",
+          "token_count": 1,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_14",
+          "chunk_text": "        fact_data = response.json()",
+          "token_count": 3,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_15",
+          "chunk_text": "        return fact_data.get(\"fact\")",
+          "token_count": 2,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_16",
+          "chunk_text": "    except requests.exceptions.RequestException as e:",
+          "token_count": 4,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_17",
+          "chunk_text": "        return f\"Error fetching cat fact: {e}\"",
+          "token_count": 6,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_18",
+          "chunk_text": "    except TypeError as e:",
+          "token_count": 4,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_19",
+          "chunk_text": "        # The bug will trigger this exception path.",
+          "token_count": 8,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_20",
+          "chunk_text": "        return f\"A TypeError occurred: {e}\"",
+          "token_count": 5,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_21",
+          "chunk_text": "Traceback (most recent call last):",
+          "token_count": 5,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_22",
+          "chunk_text": "File \"<stdin>\", line 1, in <module>",
+          "token_count": 6,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_23",
+          "chunk_text": "File \"/app/api_client.py\", line 14, in get_cat_fact",
+          "token_count": 6,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_24",
+          "chunk_text": "response = requests.get(url, timeout=\"5 seconds\")",
+          "token_count": 5,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_25",
+          "chunk_text": "...",
+          "token_count": 1,
+          "chunk_type": "line"
+        },
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_api_client.py_26",
+          "chunk_text": "TypeError: timeout value must be a float or a tuple, not <class 'str'>",
+          "token_count": 13,
+          "chunk_type": "line"
+        }
+      ]
+    },
+    {
+      "file_path": "user_profile.py",
+      "file_size_kb": 0.81,
+      "raw_content": "# In lumiere-ambassador-test-target/user_profile.py\n\ndef process_user(data: dict):\n    \"\"\"\n    Processes user data, normalizes the name, and determines eligibility.\n\n    This function has a logical bug where the steps are performed in the\n    wrong order, and the eligibility check is incorrect.\n    \"\"\"\n    # BUG 1: Eligibility should be checked *before* formatting the name,\n    # because the formatting step is expensive.\n\n    # BUG 2: The name formatting is incomplete. It should be title-cased.\n\n    # BUG 3: Eligibility age is wrong. It should be 18, not 21.\n\n    name = data.get(\"name\", \"\").strip().lower()\n\n    age = data.get(\"age\", 0)\n    if age < 21:\n        return {\"status\": \"ineligible\", \"reason\": \"User is underage.\"}\n\n    return {\n        \"status\": \"processed\",\n        \"username\": name,\n        \"age\": age\n    }\n",
+      "code_smells": [],
+      "ast_summary": "{}",
+      "text_chunks": [
+        {
+          "chunk_id": "LatchyCat_lumiere-ambassador-test-target_user_profile.py_0",
+          "chunk_text": "def process_user(data: dict):\n    \"\"\"\n    Processes user data, normalizes the name, and determines eligibility.\n\n    This function has a logical bug where the steps are performed in the\n    wrong order, and the eligibility check is incorrect.\n    \"\"\"\n    # BUG 1: Eligibility should be checked *before* formatting the name,\n    # because the formatting step is expensive.\n\n    # BUG 2: The name formatting is incomplete. It should be title-cased.\n\n    # BUG 3: Eligibility age is wrong. It should be 18, not 21.\n\n    name = data.get(\"name\", \"\").strip().lower()\n\n    age = data.get(\"age\", 0)\n    if age < 21:\n        return {\"status\": \"ineligible\", \"reason\": \"User is underage.\"}\n\n    return {\n        \"status\": \"processed\",\n        \"username\": name,\n        \"age\": age\n    }",
+          "token_count": 106,
+          "chunk_type": "function_definition"
+        }
+      ]
+    }
+  ]
+}
+--- FILE_END: backend/LatchyCat_lumiere-ambassador-test-target_cortex.json ---
+
+
+--- FILE_START: backend/ingestion/migrations/__init__.py ---
+
+--- FILE_END: backend/ingestion/migrations/__init__.py ---
+
+
+--- FILE_START: backend/ingestion/models.py ---
+from django.db import models
+
+# Create your models here.
+
+--- FILE_END: backend/ingestion/models.py ---
+
+
+--- FILE_START: backend/ingestion/management/__init__.py ---
+
+--- FILE_END: backend/ingestion/management/__init__.py ---
+
+
+--- FILE_START: backend/ingestion/management/commands/__init__.py ---
+
+--- FILE_END: backend/ingestion/management/commands/__init__.py ---
+
+
+--- FILE_START: backend/ingestion/management/commands/generate_briefing.py ---
+# In ingestion/management/commands/generate_briefing.py
+
+from django.core.management.base import BaseCommand
+from lumiere_core.services.ollama import search_index
+from lumiere_core.services.llm import generate_text
+
+class Command(BaseCommand):
+    help = 'Generates a "Pre-flight Briefing" for a given query using a RAG pipeline.'
+
+    def add_arguments(self, parser):
+        parser.add_argument('repo_id', type=str, help="The ID of the repo (e.g., 'pallets_flask').")
+        parser.add_argument('query', type=str, help='The user query or GitHub issue description.')
+        parser.add_argument('--embedding_model', type=str, default='snowflake-arctic-embed2:latest', help='The Ollama model to use for embeddings.')
+        # --- CHANGE 1: Add an argument for the generation model ---
+        parser.add_argument('--generation_model', type=str, default='qwen3:4b', help='The Ollama model to use for text generation.')
+        parser.add_argument('--k', type=int, default=7, help='Number of context chunks to retrieve.')
+
+    def handle(self, *args, **options):
+        repo_id = options['repo_id']
+        query = options['query']
+        embedding_model = options['embedding_model']
+        generation_model = options['generation_model'] # <-- Get the new option
+        k = options['k']
+
+        self.stdout.write(self.style.NOTICE(f"Step 1: Retrieving context for query: '{query}'..."))
+
+        index_path = f"{repo_id}_faiss.index"
+        map_path = f"{repo_id}_id_map.json"
+
+        try:
+            context_chunks = search_index(
+                query_text=query,
+                model_name=embedding_model, # Use the embedding model here
+                index_path=index_path,
+                map_path=map_path,
+                k=k
+            )
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f"Failed to retrieve context: {e}"))
+            return
+
+        self.stdout.write(self.style.SUCCESS(f"✓ Retrieved {len(context_chunks)} context chunks."))
+
+        context_string = ""
+        for i, chunk in enumerate(context_chunks):
+            context_string += f"--- Context Chunk {i+1} from file '{chunk['file_path']}' ---\n"
+            context_string += chunk['text']
+            context_string += "\n\n"
+
+        prompt = f"""
+        You are Lumière Sémantique, an expert AI programming assistant acting as a Principal Engineer.
+        Your mission is to provide a "Pre-flight Briefing" for a developer about to work on a task.
+        Analyze the user's query and the provided context from the codebase to generate your report.
+
+        The report must be clear, concise, and structured in Markdown. It must include the following sections:
+        1.  **Task Summary:** Briefly rephrase the user's request.
+        2.  **Core Analysis:** Based on the provided context, explain how the system currently works in relation to the query. Synthesize information from the different context chunks.
+        3.  **Key Files & Code:** Point out the most important files or functions from the context that the developer should focus on.
+        4.  **Suggested Approach or Potential Challenges:** Offer a high-level plan or mention any potential issues you foresee.
+
+        --- PROVIDED CONTEXT FROM THE CODEBASE ---
+        {context_string}
+        --- END OF CONTEXT ---
+
+        USER'S QUERY: "{query}"
+
+        Now, generate the Pre-flight Briefing.
+        """
+
+        self.stdout.write(self.style.NOTICE(f"\nStep 2: Sending context and query to the LLM ('{generation_model}') for generation..."))
+
+        # --- CHANGE 2: Pass the generation model name to the function ---
+        final_report = generate_text(prompt, model_name=generation_model)
+
+        self.stdout.write(self.style.SUCCESS("\n--- LUMIÈRE SÉMANTIQUE: PRE-FLIGHT BRIEFING ---"))
+        self.stdout.write(final_report)
+
+--- FILE_END: backend/ingestion/management/commands/generate_briefing.py ---
+
+
+--- FILE_START: backend/ingestion/management/commands/run_indexer.py ---
+# In ingestion/management/commands/run_indexer.py
+
+from django.core.management.base import BaseCommand
+from ingestion.indexing import EmbeddingIndexer
+import os
+
+class Command(BaseCommand):
+    help = 'Loads a Project Cortex JSON file and creates a Faiss index from its text chunks using Ollama.'
+
+    def add_arguments(self, parser):
+        parser.add_argument('cortex_file', type=str, help='The path to the Project Cortex JSON file.')
+        parser.add_argument(
+            '--model',
+            type=str,
+            default='snowflake-arctic-embed2:latest', # <-- Defaults to your preferred model
+            help='The name of the Ollama embedding model to use.'
+        )
+
+    def handle(self, *args, **options):
+        cortex_file_path = options['cortex_file']
+        model_name = options['model']
+
+        if not os.path.exists(cortex_file_path):
+            self.stdout.write(self.style.ERROR(f"Error: File not found at '{cortex_file_path}'"))
+            return
+
+        self.stdout.write(self.style.NOTICE(f"Starting Ollama indexing for {cortex_file_path} using model '{model_name}'..."))
+
+        try:
+            # Pass the model name to the indexer
+            indexer = EmbeddingIndexer(model_name=model_name)
+            indexer.process_cortex(cortex_file_path)
+            self.stdout.write(self.style.SUCCESS('✓ Ollama indexing process completed successfully.'))
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f'An unexpected error occurred during indexing: {e}'))
+
+--- FILE_END: backend/ingestion/management/commands/run_indexer.py ---
+
+
+--- FILE_START: backend/ingestion/management/commands/search.py ---
+# In ingestion/management/commands/search.py
+
+from django.core.management.base import BaseCommand
+from lumiere_core.services.ollama import search_index # <-- Import our new function
+
+class Command(BaseCommand):
+    help = 'Searches a Faiss index for a given query string.'
+
+    def add_arguments(self, parser):
+        parser.add_argument('repo_id', type=str, help="The ID of the repo (e.g., 'pallets_flask').")
+        parser.add_argument('query', type=str, help='The search query string.')
+        parser.add_argument('--model', type=str, default='snowflake-arctic-embed2:latest', help='The Ollama model to use.')
+        parser.add_argument('--k', type=int, default=5, help='The number of results to return.')
+
+    def handle(self, *args, **options):
+        repo_id = options['repo_id']
+        query = options['query']
+        model = options['model']
+        k = options['k']
+
+        index_path = f"{repo_id}_faiss.index"
+        map_path = f"{repo_id}_id_map.json"
+
+        self.stdout.write(self.style.NOTICE(f"Searching for '{query}'..."))
+
+        try:
+            results = search_index(
+                query_text=query,
+                model_name=model,
+                index_path=index_path,
+                map_path=map_path,
+                k=k
+            )
+
+            self.stdout.write(self.style.SUCCESS(f"\n--- Top {len(results)} search results ---"))
+            for i, res in enumerate(results):
+                self.stdout.write(self.style.HTTP_INFO(f"\n{i+1}. File: {res['file_path']} (Distance: {res['distance']:.4f})"))
+                self.stdout.write(f"Chunk ID: {res['chunk_id']}")
+                self.stdout.write("---")
+                # Print the first few lines of the text chunk
+                content_preview = "\n".join(res['text'].splitlines()[:5])
+                self.stdout.write(content_preview)
+                self.stdout.write("...")
+
+        except FileNotFoundError:
+            self.stdout.write(self.style.ERROR(f"Could not find index files for '{repo_id}'. Please run the indexer first."))
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f"An error occurred: {e}"))
+
+--- FILE_END: backend/ingestion/management/commands/search.py ---
+
+
+--- FILE_START: backend/ingestion/management/commands/run_crawler.py ---
+# In backend/ingestion/management/commands/run_crawler.py
+
+import json
+import traceback
+from django.core.management.base import BaseCommand
+from ingestion.crawler import IntelligentCrawler
+from ingestion.jsonifier import Jsonifier
+
+class Command(BaseCommand):
+    help = 'Clones a Git repository, creates the Project Cortex JSON, and saves it.'
+
+    def add_arguments(self, parser):
+        parser.add_argument('repo_url', type=str, help='The URL of the Git repository to clone.')
+
+    def handle(self, *args, **options):
+        repo_url = options['repo_url']
+        # Generate the repo_id just like the API does.
+        repo_id = repo_url.replace("https://github.com/", "").replace("/", "_")
+
+        self.stdout.write(self.style.NOTICE(f'Starting process for {repo_id} ({repo_url})...'))
+
+        try:
+            # --- FIX: Use the IntelligentCrawler as a context manager ---
+            # The `with` statement correctly handles the setup (cloning) and
+            # teardown (cleanup) of the temporary repository directory.
+            with IntelligentCrawler(repo_url=repo_url) as crawler:
+                # The cloning is now handled automatically when the 'with' block is entered.
+                # We simply need to get the list of files to process.
+                files_to_process = crawler.get_file_paths()
+
+                if files_to_process:
+                    self.stdout.write(self.style.SUCCESS(f'\nFound {len(files_to_process)} files. Starting JSON-ification...'))
+
+                    # We now correctly pass the crawler's repo_path attribute.
+                    jsonifier = Jsonifier(
+                        file_paths=files_to_process,
+                        repo_root=crawler.repo_path,
+                        repo_id=repo_id
+                    )
+                    project_cortex = jsonifier.generate_cortex()
+
+                    output_filename = f"{repo_id}_cortex.json"
+                    with open(output_filename, 'w', encoding='utf-8') as f:
+                        json.dump(project_cortex, f, indent=2)
+
+                    self.stdout.write(self.style.SUCCESS(f'✓ Project Cortex created successfully: {output_filename}'))
+                    self.stdout.write(self.style.NOTICE(f"\nNext Step: Run the indexer command:"))
+                    self.stdout.write(self.style.SUCCESS(f"python manage.py run_indexer {output_filename}"))
+
+
+                else:
+                    self.stdout.write(self.style.WARNING('No files found to process or an error occurred.'))
+
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f'\nAn unexpected error occurred: {e}'))
+            self.stdout.write(self.style.ERROR('--- Full Traceback ---'))
+            traceback.print_exc()
+            self.stdout.write(self.style.ERROR('--- End Traceback ---'))
+        # NOTE: No explicit crawler.cleanup() is needed here because the
+        # `with` statement guarantees cleanup even if errors occur.
+
+--- FILE_END: backend/ingestion/management/commands/run_crawler.py ---
+
+
+--- FILE_START: backend/ingestion/__init__.py ---
+
+--- FILE_END: backend/ingestion/__init__.py ---
+
+
+--- FILE_START: backend/ingestion/apps.py ---
+from django.apps import AppConfig
+
+
+class IngestionConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "ingestion"
+
+--- FILE_END: backend/ingestion/apps.py ---
+
+
+--- FILE_START: backend/ingestion/admin.py ---
+from django.contrib import admin
+
+# Register your models here.
+
+--- FILE_END: backend/ingestion/admin.py ---
+
+
+--- FILE_START: backend/ingestion/jsonifier.py ---
+# In ingestion/jsonifier.py
+
+import json
+import pathlib
+import datetime
+import ast  # <-- Import Python's built-in AST module
+from typing import List, Dict, TypedDict
+
+# --- Define the Project Cortex Data Structure (no changes here) ---
+class TextChunk(TypedDict):
+    chunk_id: str
+    chunk_text: str
+    token_count: int
+    chunk_type: str
+
+class FileCortex(TypedDict):
+    file_path: str
+    file_size_kb: int
+    raw_content: str
+    code_smells: List[str]
+    ast_summary: str
+    text_chunks: List[TextChunk]
+
+class ProjectCortex(TypedDict):
+    repo_id: str
+    last_crawled_utc: str
+    project_health_score: float
+    project_structure_tree: str
+    github_metadata: Dict
+    files: List[FileCortex]
+
+# --- New AST-based Chunker ---
+# This "Visitor" pattern is the standard way to walk an AST.
+class CodeChunker(ast.NodeVisitor):
+    def __init__(self, source_code: str):
+        self.source_code = source_code
+        self.chunks = []
+
+    def visit_FunctionDef(self, node: ast.FunctionDef):
+        """This method is called for every function definition."""
+        chunk_text = ast.get_source_segment(self.source_code, node)
+        if chunk_text:
+            self.chunks.append({"text": chunk_text, "type": "function_definition"})
+        # We stop descending here to treat the whole function as one chunk
+        # To chunk recursively, call self.generic_visit(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef):
+        """This method is called for every class definition."""
+        chunk_text = ast.get_source_segment(self.source_code, node)
+        if chunk_text:
+            self.chunks.append({"text": chunk_text, "type": "class_definition"})
+
+# --- The Jsonifier Class ---
+class Jsonifier:
+    """
+    Reads a list of files, chunks their content using Python's 'ast' module,
+    and builds the Project Cortex JSON object.
+    """
+    def __init__(self, file_paths: List[pathlib.Path], repo_root: pathlib.Path, repo_id: str):
+        self.file_paths = file_paths
+        self.repo_root = repo_root
+        self.repo_id = repo_id
+        # No parser setup needed!
+
+    def _read_file_content(self, file_path: pathlib.Path) -> str:
+        try:
+            return file_path.read_text(encoding='utf-8')
+        except UnicodeDecodeError:
+            return file_path.read_text(encoding='latin-1', errors='replace')
+
+    def _chunk_python_file(self, content: str) -> List[dict]:
+        """Intelligently chunks Python code using the AST."""
+        try:
+            tree = ast.parse(content)
+            chunker = CodeChunker(content)
+            chunker.visit(tree)
+            return chunker.chunks
+        except SyntaxError:
+            # If the file isn't valid Python, fallback to line-by-line chunking
+            return [{"text": line, "type": "line"} for line in content.splitlines() if line.strip()]
+
+    def generate_cortex(self) -> ProjectCortex:
+        all_files_cortex: List[FileCortex] = []
+
+        for file_path in self.file_paths:
+            content = self._read_file_content(file_path)
+
+            raw_chunks = []
+            # Only use the AST parser for Python files
+            if file_path.suffix == '.py':
+                raw_chunks = self._chunk_python_file(content)
+            else:
+                # For non-Python files (.md, .txt, etc.), just split by paragraph
+                raw_chunks = [{"text": chunk, "type": "paragraph"} for chunk in content.split('\n\n') if chunk.strip()]
+
+            text_chunks: List[TextChunk] = []
+            relative_path_str = str(file_path.relative_to(self.repo_root))
+            for i, chunk_data in enumerate(raw_chunks):
+                chunk_id = f"{self.repo_id}_{relative_path_str}_{i}"
+                chunk_text = chunk_data['text']
+                text_chunks.append({
+                    "chunk_id": chunk_id,
+                    "chunk_text": chunk_text,
+                    "token_count": len(chunk_text.split()),
+                    "chunk_type": chunk_data['type'],
+                })
+
+            file_cortex: FileCortex = {
+                "file_path": relative_path_str,
+                "file_size_kb": round(file_path.stat().st_size / 1024, 2),
+                "raw_content": content,
+                "code_smells": [],
+                "ast_summary": "{}",
+                "text_chunks": text_chunks
+            }
+            all_files_cortex.append(file_cortex)
+
+        project_cortex: ProjectCortex = {
+            "repo_id": self.repo_id,
+            "last_crawled_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "project_health_score": 0.0,
+            "project_structure_tree": "...",
+            "github_metadata": {},
+            "files": all_files_cortex
+        }
+
+        return project_cortex
+
+--- FILE_END: backend/ingestion/jsonifier.py ---
+
+
+--- FILE_START: backend/ingestion/indexing.py ---
+# In ingestion/indexing.py
+
+import json
+import numpy as np
+import faiss
+from lumiere_core.services.ollama import get_ollama_embeddings # <-- Import our new service
+
+class EmbeddingIndexer:
+    """
+    Loads a Project Cortex JSON, generates embeddings via Ollama,
+    and saves the Faiss index and the ID-to-chunk mapping.
+    """
+    def __init__(self, model_name: str):
+        self.model_name = model_name
+        self.dimension = None # We will determine this from the first embedding
+
+    def process_cortex(self, cortex_file_path: str):
+        """
+        Main method to load cortex, create embeddings, and build the index.
+        """
+        print(f"Loading Project Cortex from: {cortex_file_path}")
+        with open(cortex_file_path, 'r', encoding='utf-8') as f:
+            project_cortex = json.load(f)
+
+        # 1. Collect all text chunks and their IDs
+        all_chunks_text = []
+        all_chunk_ids = []
+        id_to_chunk_map = {}
+
+        for file_data in project_cortex['files']:
+            for chunk in file_data['text_chunks']:
+                all_chunks_text.append(chunk['chunk_text'])
+                chunk_id = chunk['chunk_id']
+                all_chunk_ids.append(chunk_id)
+                id_to_chunk_map[chunk_id] = {
+                    "text": chunk['chunk_text'],
+                    "file_path": file_data['file_path']
+                }
+
+        if not all_chunks_text:
+            print("No text chunks found. Exiting.")
+            return
+
+        print(f"Found {len(all_chunks_text)} text chunks to embed using Ollama model '{self.model_name}'.")
+
+        # 2. Generate embeddings using our Ollama service
+        embeddings_list = get_ollama_embeddings(all_chunks_text, model_name=self.model_name)
+
+        # Determine the embedding dimension from the first result
+        self.dimension = len(embeddings_list[0])
+        print(f"Ollama model '{self.model_name}' produced embeddings with dimension: {self.dimension}")
+
+        embeddings = np.array(embeddings_list).astype('float32')
+
+        # 3. Create and populate the Faiss index
+        print("Creating Faiss index...")
+        index = faiss.IndexFlatL2(self.dimension)
+        faiss_id_to_chunk_id = all_chunk_ids
+
+        index.add(embeddings)
+        print(f"Faiss index created. Total vectors in index: {index.ntotal}")
+
+        # 4. Save the artifacts
+        repo_id = project_cortex['repo_id']
+        index_filename = f"{repo_id}_faiss.index"
+        map_filename = f"{repo_id}_id_map.json"
+
+        print(f"Saving Faiss index to: {index_filename}")
+        faiss.write_index(index, index_filename)
+
+        print(f"Saving ID-to-Chunk mapping to: {map_filename}")
+        save_data = {
+            "faiss_id_to_chunk_id": faiss_id_to_chunk_id,
+            "chunk_id_to_data": id_to_chunk_map
+        }
+        with open(map_filename, 'w', encoding='utf-8') as f:
+            json.dump(save_data, f, indent=2)
+
+        print("Indexing complete.")
+
+--- FILE_END: backend/ingestion/indexing.py ---
+
+
+--- FILE_START: backend/ingestion/tests.py ---
+from django.test import TestCase
+
+# Create your tests here.
+
+--- FILE_END: backend/ingestion/tests.py ---
+
+
+--- FILE_START: backend/ingestion/views.py ---
+from django.shortcuts import render
+
+# Create your views here.
+
+--- FILE_END: backend/ingestion/views.py ---
+
+
+--- FILE_START: backend/ingestion/crawler.py ---
+# In ingestion/crawler.py
+import subprocess
+import tempfile
+import pathlib
+from typing import List, Optional, Union, Dict
+
+class IntelligentCrawler:
+    """
+    Clones a Git repository and performs file operations safely.
+    Includes path-finding, git blame, and git diff capabilities.
+    """
+
+    def __init__(self, repo_url: str):
+        """
+        Initializes the crawler with the repository URL.
+        """
+        self.repo_url = repo_url
+        self.temp_dir_handle = tempfile.TemporaryDirectory()
+        self.repo_path = pathlib.Path(self.temp_dir_handle.name)
+        self._file_paths_cache: Optional[List[pathlib.Path]] = None
+
+    def __enter__(self):
+        """
+        Enters the context manager, cloning the repository.
+        """
+        print(f"Entering context: Cloning {self.repo_url} into {self.repo_path}")
+        self._clone_repo()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """
+        Exits the context manager, cleaning up resources.
+        """
+        print("Exiting context: Cleaning up resources.")
+        self.cleanup()
+
+    def _clone_repo(self):
+        """
+        Clones the full git repository, including all branches and tags.
+        """
+        try:
+            # '--mirror' is too aggressive, '--bare' isn't a working tree.
+            # We will clone normally and then fetch all tags and branches.
+            subprocess.run(
+                ['git', 'clone', self.repo_url, str(self.repo_path)],
+                check=True, capture_output=True, text=True
+            )
+            # After cloning, fetch all tags and remote branches explicitly.
+            # 'git fetch origin --tags' and 'git fetch origin' ensures everything is available.
+            subprocess.run(['git', 'fetch', 'origin', '--tags'], cwd=self.repo_path, check=True, capture_output=True, text=True)
+            subprocess.run(['git', 'remote', 'update'], cwd=self.repo_path, check=True, capture_output=True, text=True)
+
+            print(f"Repository cloned successfully and all refs fetched from {self.repo_path}")
+        except subprocess.CalledProcessError as e:
+            print(f"Error cloning repository: {e.stderr.strip()}")
+            raise
+
+    def get_blame_for_file(self, target_file: str) -> str:
+        """
+        Runs `git blame` on a specific file in the repo.
+        """
+        file_full_path = self.repo_path / target_file
+        if not file_full_path.exists():
+            return f"Error from crawler: File '{target_file}' does not exist in the repository."
+
+        try:
+            print(f"Running 'git blame' on {file_full_path}...")
+            result = subprocess.run(
+                ['git', 'blame', '--show-email', str(file_full_path)],
+                cwd=self.repo_path, check=True, capture_output=True, text=True
+            )
+            return result.stdout
+        except subprocess.CalledProcessError as e:
+            error_message = f"Error running 'git blame' on '{target_file}': {e.stderr.strip()}"
+            print(error_message)
+            return error_message
+
+    def get_diff_for_branch(self, ref_name: str, base_ref: str = 'main') -> str:
+        """
+        [Final Version] Gets the `git diff` between two refs (branch, tag, or commit).
+        This version is robust and relies on the three-dot diff syntax.
+        """
+        try:
+            print(f"Attempting to calculate diff for '{ref_name}' against base '{base_ref}'...")
+
+            # The '...' syntax finds the diff from the common ancestor, which is what a
+            # code review for a PR/feature branch usually wants. We prepend 'origin/'
+            # to ensure we're comparing against the fetched remote state.
+            # For tags, they don't need 'origin/'. Git is smart enough.
+            # Let's check if the ref is a tag.
+
+            # To make this truly robust, we'll try to resolve the refs first.
+            # Let's stick to the simplest, most powerful git syntax.
+
+            # The refs are specified as 'origin/<branch_name>' for remote branches.
+            # Tags are just referred to by their name. Git resolves this automatically
+            # if we have fetched all data. The logic here simplifies to trying 'main'
+            # then 'master' as a base.
+
+            diff_command = ['git', 'diff', f'origin/{base_ref}...{ref_name}']
+
+            print(f"   -> Running command: {' '.join(diff_command)}")
+            result = subprocess.run(
+                diff_command,
+                cwd=self.repo_path,
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            return result.stdout
+        except subprocess.CalledProcessError as e:
+            # If the command failed, it might be because the base is 'master' not 'main'.
+            if base_ref == 'main':
+                print(f"   -> Diff against 'origin/main' failed. Trying 'origin/master' as base...")
+                return self.get_diff_for_branch(ref_name, 'master')
+
+            error_message = f"Error running 'git diff' between '{base_ref}' and '{ref_name}': {e.stderr.strip()}"
+            print(error_message)
+            return f"Error from crawler: {error_message}"
+
+
+    def find_file_path(self, target_filename: str) -> Union[str, Dict, None]:
+        """
+        Searches the repository for a file by its name.
+        """
+        print(f"Searching for file matching '{target_filename}'...")
+        all_files = self.get_file_paths()
+
+        possible_matches = []
+        for file_path in all_files:
+            relative_path = file_path.relative_to(self.repo_path)
+            if relative_path.name == target_filename or str(relative_path).endswith('/' + target_filename):
+                possible_matches.append(relative_path)
+
+        if not possible_matches:
+            print(f"   -> No match found for '{target_filename}'.")
+            return None
+
+        if len(possible_matches) == 1:
+            match = str(possible_matches[0])
+            print(f"   -> Found unique match: {match}")
+            return match
+
+        print(f"   -> Found multiple matches: {[str(p) for p in possible_matches]}. Checking for a definitive root-level file.")
+        root_matches = [p for p in possible_matches if len(p.parts) == 1]
+
+        if len(root_matches) == 1:
+            match = str(root_matches[0])
+            print(f"   -> Prioritized unique root match: {match}")
+            return match
+
+        print(f"   -> Ambiguity detected. Multiple candidates found. Reporting conflict.")
+        return {
+            "error": "ambiguous_path",
+            "message": f"Multiple files found matching '{target_filename}'. Please specify one.",
+            "options": [str(p) for p in possible_matches]
+        }
+
+
+    def get_file_paths(self) -> List[pathlib.Path]:
+        """
+        Scans the cloned repo and returns a list of relevant files.
+        Caches the result for performance.
+        """
+        if self._file_paths_cache is not None:
+            return self._file_paths_cache
+
+        print("Scanning for relevant files...")
+        files_to_process = []
+        included_extensions = [
+            '*.py', '*.md', '*.txt', '*.rst', '*.json', '*.toml', '*.yaml',
+            '*.js', 'Dockerfile', 'LICENSE'
+        ]
+        excluded_dirs = {'.git', '__pycache__', 'venv', 'node_modules', '.vscode', '.idea', 'dist', 'build'}
+
+        for file_path in self.repo_path.rglob('*'):
+            if any(part in excluded_dirs for part in file_path.relative_to(self.repo_path).parts):
+                continue
+            if file_path.is_file() and any(file_path.match(ext) for ext in included_extensions):
+                files_to_process.append(file_path)
+
+        self._file_paths_cache = files_to_process
+        print(f"Found and cached {len(files_to_process)} files to process.")
+        return self._file_paths_cache
+
+    def cleanup(self):
+        """
+        Removes the temporary directory and all its contents.
+        """
+        self.temp_dir_handle.cleanup()
+        print(f"Cleaned up temporary directory: {self.repo_path}")
+
+--- FILE_END: backend/ingestion/crawler.py ---
+
+
+--- FILE_START: backend/requirements.txt ---
+# Django Core
+Django
+djangorestframework
+
+# LLM & Vector Database
+ollama
+faiss-cpu
+numpy
+tqdm
+
+# Web Scraping (Legacy, but keep for now)
+requests
+beautifulsoup4
+
+# GitHub API Client
+PyGithub
+
+# --- NEW: For loading .env files ---
+python-dotenv
+
+--- FILE_END: backend/requirements.txt ---
+
+
+--- FILE_START: backend/LatchyCat_lumiere-ambassador-test-target_id_map.json ---
+{
+  "faiss_id_to_chunk_id": [
+    "LatchyCat_lumiere-ambassador-test-target_requirements.txt_0",
+    "LatchyCat_lumiere-ambassador-test-target_test_calculator.py_0",
+    "LatchyCat_lumiere-ambassador-test-target_test_calculator.py_1",
+    "LatchyCat_lumiere-ambassador-test-target_test_calculator.py_2",
+    "LatchyCat_lumiere-ambassador-test-target_README.md_0",
+    "LatchyCat_lumiere-ambassador-test-target_README.md_1",
+    "LatchyCat_lumiere-ambassador-test-target_calculator.py_0",
+    "LatchyCat_lumiere-ambassador-test-target_calculator.py_1",
+    "LatchyCat_lumiere-ambassador-test-target_calculator.py_2",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_0",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_1",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_2",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_3",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_4",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_5",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_6",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_7",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_8",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_9",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_10",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_11",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_12",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_13",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_14",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_15",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_16",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_17",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_18",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_19",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_20",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_21",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_22",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_23",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_24",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_25",
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_26",
+    "LatchyCat_lumiere-ambassador-test-target_user_profile.py_0"
+  ],
+  "chunk_id_to_data": {
+    "LatchyCat_lumiere-ambassador-test-target_requirements.txt_0": {
+      "text": "requests==2.28.0\n",
+      "file_path": "requirements.txt"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_test_calculator.py_0": {
+      "text": "def test_add():\n    \"\"\"Tests the add function.\"\"\"\n    assert add(2, 3) == 5",
+      "file_path": "test_calculator.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_test_calculator.py_1": {
+      "text": "def test_subtract():\n    \"\"\"\n    Tests the subtract function.\n    THIS TEST WILL FAIL due to the bug in subtract().\n    \"\"\"\n    assert subtract(5, 2) == 3",
+      "file_path": "test_calculator.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_test_calculator.py_2": {
+      "text": "def test_multiply():\n    \"\"\"Tests the multiply function.\"\"\"\n    assert multiply(3, 4) == 12",
+      "file_path": "test_calculator.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_README.md_0": {
+      "text": "# lumiere-ambassador-test-target\nTest Environment Setup ",
+      "file_path": "README.md"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_README.md_1": {
+      "text": "The Ambassador - Automated Pull Request (PR) Agent\nWhat it is: The final step in fulfilling your core mission. This agent would chain together several of your existing services to not only generate a fix but to package it and formally submit it as a Pull Request to the original GitHub repository.\nWhy it aligns with our philosophy: This represents the pinnacle of a \"data-reactive system that...interacts with code on a near-human level.\" It closes the loop from analysis (briefing) to implementation (scaffold, generate-tests) to contribution. It takes the semantic understanding of the code and translates it into a tangible, collaborative action within the open-source community.\nHow it would work (High-Level):\nWorkflow Orchestration: This would be a new \"workflow\" service that calls your existing services in sequence.\nGenerate The Fix: It would first run the briefing, scaffold, and generate-tests agents to produce the necessary code modifications and new test files.\nLocal Git Operations: Using the IntelligentCrawler and Python's subprocess module, it would:\nClone the repository.\nCreate a new branch (e.g., lumiere-fix/issue-123).\nWrite the modified and new files to the local filesystem.\nCommit & Push: Use an LLM to generate a structured commit message based on the original issue. Then, use git commands to add, commit, and push the new branch to a user's fork of the repository.\nCreate Pull Request: Finally, it would use the PyGithub library to open a pull request from the new branch on the fork to the main branch of the upstream repository. The PR description would be pre-filled with the \"Pre-flight Briefing\" report.\n",
+      "file_path": "README.md"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_calculator.py_0": {
+      "text": "def add(a, b):\n    \"\"\"Correctly adds two numbers.\"\"\"\n    return a + b",
+      "file_path": "calculator.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_calculator.py_1": {
+      "text": "def subtract(a, b):\n    \"\"\"\n    This function is supposed to subtract two numbers,\n    but it contains a bug.\n    \"\"\"\n    # BUG: This should be a - b\n    return a + b",
+      "file_path": "calculator.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_calculator.py_2": {
+      "text": "def multiply(a, b):\n    \"\"\"Correctly multiplies two numbers.\"\"\"\n    return a * b",
+      "file_path": "calculator.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_0": {
+      "text": "# In lumiere-ambassador-test-target/api_client.py",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_1": {
+      "text": "import requests",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_2": {
+      "text": "import json",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_3": {
+      "text": "def get_cat_fact():",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_4": {
+      "text": "    \"\"\"",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_5": {
+      "text": "    Fetches a random cat fact from a public API.",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_6": {
+      "text": "    This function has a bug related to how the API is called.",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_7": {
+      "text": "    \"\"\"",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_8": {
+      "text": "    url = \"https://catfact.ninja/fact\"",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_9": {
+      "text": "    try:",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_10": {
+      "text": "        # BUG: The 'timeout' parameter should be a number (e.g., 5), not a string.",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_11": {
+      "text": "        # This will cause a TypeError when the requests library processes it.",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_12": {
+      "text": "        response = requests.get(url, timeout=\"5 seconds\")",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_13": {
+      "text": "        response.raise_for_status()",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_14": {
+      "text": "        fact_data = response.json()",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_15": {
+      "text": "        return fact_data.get(\"fact\")",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_16": {
+      "text": "    except requests.exceptions.RequestException as e:",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_17": {
+      "text": "        return f\"Error fetching cat fact: {e}\"",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_18": {
+      "text": "    except TypeError as e:",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_19": {
+      "text": "        # The bug will trigger this exception path.",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_20": {
+      "text": "        return f\"A TypeError occurred: {e}\"",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_21": {
+      "text": "Traceback (most recent call last):",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_22": {
+      "text": "File \"<stdin>\", line 1, in <module>",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_23": {
+      "text": "File \"/app/api_client.py\", line 14, in get_cat_fact",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_24": {
+      "text": "response = requests.get(url, timeout=\"5 seconds\")",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_25": {
+      "text": "...",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_api_client.py_26": {
+      "text": "TypeError: timeout value must be a float or a tuple, not <class 'str'>",
+      "file_path": "api_client.py"
+    },
+    "LatchyCat_lumiere-ambassador-test-target_user_profile.py_0": {
+      "text": "def process_user(data: dict):\n    \"\"\"\n    Processes user data, normalizes the name, and determines eligibility.\n\n    This function has a logical bug where the steps are performed in the\n    wrong order, and the eligibility check is incorrect.\n    \"\"\"\n    # BUG 1: Eligibility should be checked *before* formatting the name,\n    # because the formatting step is expensive.\n\n    # BUG 2: The name formatting is incomplete. It should be title-cased.\n\n    # BUG 3: Eligibility age is wrong. It should be 18, not 21.\n\n    name = data.get(\"name\", \"\").strip().lower()\n\n    age = data.get(\"age\", 0)\n    if age < 21:\n        return {\"status\": \"ineligible\", \"reason\": \"User is underage.\"}\n\n    return {\n        \"status\": \"processed\",\n        \"username\": name,\n        \"age\": age\n    }",
+      "file_path": "user_profile.py"
+    }
+  }
+}
+--- FILE_END: backend/LatchyCat_lumiere-ambassador-test-target_id_map.json ---
+
+
+--- FILE_START: backend/lumiere_core/asgi.py ---
+# In ~/lumiere_semantique/backend/lumiere_core/asgi.py
+"""
+ASGI config for backend project.
+
+It exposes the ASGI callable as a module-level variable named ``application``.
+
+For more information on this file, see
+https://docs.djangoproject.com/en/5.2/howto/deployment/asgi/
+"""
+
+import os
+
+from django.core.asgi import get_asgi_application
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "backend.settings")
+
+application = get_asgi_application()
+
+--- FILE_END: backend/lumiere_core/asgi.py ---
+
+
+--- FILE_START: backend/lumiere_core/__init__.py ---
+# In ~/lumiere_semantique/backend/lumiere_core/__init__.py
+
+--- FILE_END: backend/lumiere_core/__init__.py ---
+
+
+--- FILE_START: backend/lumiere_core/.gitignore ---
+# In ~/lumiere_semantique/backend/lumiere_core/.gitignore
+# Python
+__pycache__/
+*.pyc
+
+# Virtual Environment
+venv/
+
+# Django
+db.sqlite3
+*.log
+
+# Environment variables
+.env
+
+--- FILE_END: backend/lumiere_core/.gitignore ---
+
+
+--- FILE_START: backend/lumiere_core/.env ---
+ANTHROPIC_API_KEY="sk-ant-your-api-key-here"
+
+GITHUB_ACCESS_TOKEN="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"
+
+# The GitHub username the agent will use to fork repos and create PRs.
+GITHUB_FORK_USERNAME="LatchyCat"
+
+--- FILE_END: backend/lumiere_core/.env ---
+
+
+--- FILE_START: backend/lumiere_core/settings.py ---
+# In ~/lumiere_semantique/backend/lumiere_core/settings.py
+"""
+Django settings for lumiere_core project.
+
+Generated by 'django-admin startproject' using Django 5.2.3.
+
+For more information on this file, see
+https://docs.djangoproject.com/en/5.2/topics/settings/
+
+For the full list of settings and their values, see
+https://docs.djangoproject.com/en/5.2/ref/settings/
+"""
+
+from pathlib import Path
+
+# Build paths inside the project like this: BASE_DIR / 'subdir'.
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+# Quick-start development settings - unsuitable for production
+# See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
+
+# SECURITY WARNING: keep the secret key used in production secret!
+SECRET_KEY = "django-insecure-7f#&l-vg3lb9%s5lkx!352hf2^&!w%ro6wa97*kqm@8+d94*67"
+
+# SECURITY WARNING: don't run with debug turned on in production!
+DEBUG = True
+
+ALLOWED_HOSTS = []
+
+
+# Application definition
+
+INSTALLED_APPS = [
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+
+    # --- Third-party apps ---
+    'rest_framework',
+
+    # --- Our local apps ---
+    'ingestion',
+    'api',
+]
+
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+]
+
+# This should already be correct from our previous fixes.
+ROOT_URLCONF = 'lumiere_core.urls'
+
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
+            ],
+        },
+    },
+]
+
+# This should also be correct, but ensure it points to 'lumiere_core'.
+WSGI_APPLICATION = "lumiere_core.wsgi.application"
+
+
+# Database
+# https://docs.djangoproject.com/en/5.2/ref/settings/#databases
+
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": BASE_DIR / "db.sqlite3",
+    }
+}
+
+
+# Password validation
+# https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
+
+AUTH_PASSWORD_VALIDATORS = [
+    {
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
+    },
+    {
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+    },
+    {
+        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
+    },
+    {
+        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
+    },
+]
+
+
+# Internationalization
+# https://docs.djangoproject.com/en/5.2/topics/i18n/
+
+LANGUAGE_CODE = "en-us"
+
+TIME_ZONE = "UTC"
+
+USE_I18N = True
+
+USE_TZ = True
+
+
+# Static files (CSS, JavaScript, Images)
+# https://docs.djangoproject.com/en/5.2/howto/static-files/
+
+STATIC_URL = "static/"
+
+# Default primary key field type
+# https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
+
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# --- Add this section for Django REST Framework ---
+# This allows DRF to have sensible default settings.
+REST_FRAMEWORK = {
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+    ],
+    # Use BrowsableAPIRenderer only during development for easier debugging
+    'DEFAULT_PARSER_CLASSES': [
+        'rest_framework.parsers.JSONParser',
+    ]
+}
+
+--- FILE_END: backend/lumiere_core/settings.py ---
+
+
+--- FILE_START: backend/lumiere_core/urls.py ---
+# In ~/lumiere_semantique/backend/lumiere_core/urls.py
+# In lumiere_core/urls.py
+
+from django.contrib import admin
+from django.urls import path, include # <-- Make sure 'include' is imported
+
+urlpatterns = [
+    path('admin/', admin.site.urls),
+
+    # This line tells Django that any URL starting with 'api/v1/'
+    # should be handled by the URL patterns defined in our 'api.urls' file.
+    path('api/v1/', include('api.urls')),
+]
+
+--- FILE_END: backend/lumiere_core/urls.py ---
+
+
+--- FILE_START: backend/lumiere_core/services/documentation.py ---
+# In lumiere_core/services/documentation.py
+from typing import Dict
+
+from .ollama import search_index
+from .llm import generate_text
+from .utils import clean_llm_code_output
+
+def generate_docstring_for_code(repo_id: str, new_code: str, instruction: str) -> Dict[str, str]:
+    """
+    The core logic for the Chronicler Agent (Documentation).
+
+    It finds existing docstring patterns in the repo and uses them as a style guide
+    to generate a new docstring for the provided code.
+    """
+    print(f"Initiating Chronicler Agent for repo '{repo_id}'")
+
+    # --- Step 1: Find Existing Documentation Patterns with RAG ---
+    print("   -> Step 1: Finding existing docstring patterns with RAG...")
+    index_path, map_path = f"{repo_id}_faiss.index", f"{repo_id}_id_map.json"
+    search_query = f"Example docstrings in Python code for a function about: {instruction}"
+
+    context_chunks = search_index(
+        query_text=search_query,
+        model_name='snowflake-arctic-embed2:latest',
+        index_path=index_path,
+        map_path=map_path,
+        k=5
+    )
+
+    doc_context_string = ""
+    found_files = set()
+    for chunk in context_chunks:
+        # Check if the text contains function or class definitions with docstrings
+        # We look for patterns that likely contain good docstring examples
+        if chunk['text'].strip().startswith(('def ', 'class ')) and chunk['file_path'] not in found_files:
+            doc_context_string += f"--- Example from file \"{chunk['file_path']}\" ---\n{chunk['text']}\n\n"
+            found_files.add(chunk['file_path'])
+
+    if not doc_context_string:
+        doc_context_string = "No specific docstring styles found. Please generate a standard Google-style docstring."
+        print("   -> Warning: No existing docstring examples found via RAG.")
+    else:
+        print(f"   -> Found docstring patterns from files: {list(found_files)}")
+
+    # --- Step 2: Construct the Docstring Generation Prompt ---
+    print("   -> Step 2: Constructing docstring generation prompt...")
+    prompt = f"""You are an expert technical writer specializing in Python documentation.
+
+**YOUR INSTRUCTIONS:**
+1.  **Analyze "EXISTING DOCSTRING EXAMPLES"** to learn the project's documentation style (e.g., Google, reStructuredText, numpy). Pay attention to sections like `Args:`, `Returns:`, `Raises:`.
+2.  **Analyze the "CODE TO BE DOCUMENTED"** to understand its parameters, logic, and what it returns.
+3.  **Write a complete and professional docstring** for the provided code. It is CRITICAL that you exactly match the style of the examples.
+4.  **Output ONLY the docstring itself.** Do not include the function definition or any other text, just the `\"\"\"...\"\"\"` block.
+
+---
+### EXISTING DOCSTRING EXAMPLES
+{doc_context_string}
+---
+### CODE TO BE DOCUMENTED
+```python
+{new_code}
+```
+
+Now, generate ONLY the docstring for the code above."""
+
+    # --- Step 3: Generate and Clean the Docstring ---
+    print(f"   -> Step 3: Sending request to code generation model 'qwen2.5-coder:3b'...")
+    raw_docstring = generate_text(prompt, model_name='qwen2.5-coder:3b')
+
+    print("   -> Step 4: Cleaning and finalizing the docstring...")
+    final_docstring = clean_llm_code_output(raw_docstring)
+
+    # A common LLM artifact is to wrap the docstring in triple quotes. Let's ensure it's clean.
+    if final_docstring.startswith('"""') and final_docstring.endswith('"""'):
+        final_docstring = final_docstring[3:-3].strip()
+
+    return {"docstring": final_docstring}
+
+--- FILE_END: backend/lumiere_core/services/documentation.py ---
+
+
+--- FILE_START: backend/lumiere_core/services/review_service.py ---
+# In lumiere_core/services/review_service.py
+import uuid
+import tempfile
+import subprocess
+from pathlib import Path
+from typing import Dict, Optional, List
+
+from .llm import generate_text
+
+# This is a simple in-memory cache for our development server.
+REVIEW_ENVIRONMENTS = {}
+
+def _resolve_git_ref(repo_path: Path, ref_name: str) -> Optional[str]:
+    """
+    [TRUE FINAL VERSION] Verifies a git reference by trying a list of candidates
+    to handle common naming variations (e.g., tags with/without 'v' prefix).
+    """
+    # Build a list of potential candidates to check.
+    candidates: List[str] = []
+
+    # 1. Add the ref_name as a potential remote branch.
+    candidates.append(f"origin/{ref_name}")
+
+    # 2. Add the ref_name as a direct reference (exact match for a tag, commit, etc.).
+    candidates.append(ref_name)
+
+    # 3. Handle the 'v' prefix for version tags, which is the source of the issue.
+    if ref_name.startswith('v') and len(ref_name) > 1:
+        # If the user provided 'v1.26.15', try '1.26.15' as a direct ref and as a branch.
+        ref_without_v = ref_name[1:]
+        candidates.append(f"origin/{ref_without_v}")
+        candidates.append(ref_without_v)
+
+    # We will now iterate through our candidates and return the first one that is valid.
+    print(f"   -> Attempting to resolve '{ref_name}' with candidates: {candidates}")
+    for candidate in candidates:
+        try:
+            # `rev-parse --verify` is the correct, simple tool for this.
+            # It exits 0 if the ref is valid and can be resolved, 1 otherwise.
+            subprocess.run(
+                ['git', 'rev-parse', '--verify', '--quiet', candidate],
+                cwd=repo_path, check=True, capture_output=True
+            )
+            # SUCCESS: The candidate is a valid git object.
+            print(f"   -> SUCCESS: Resolved '{ref_name}' as valid git object '{candidate}'")
+            return candidate
+        except subprocess.CalledProcessError:
+            # This candidate failed, continue to the next one.
+            continue
+
+    # If the loop completes without finding a valid candidate, the ref does not exist.
+    print(f"   -> FAILED: Could not resolve '{ref_name}' with any of the candidates.")
+    return None
+
+def prepare_review_environment(repo_url: str, ref_name: str) -> Dict[str, str]:
+    """
+    [TRUE FINAL VERSION] Clones a repo, fetches all refs, then uses the truly robust
+    _resolve_git_ref function to validate and store them for the review.
+    """
+    review_id = str(uuid.uuid4())
+    temp_dir_handle = tempfile.TemporaryDirectory()
+    repo_path = Path(temp_dir_handle.name)
+    print(f"Preparing review environment {review_id} at {repo_path}")
+
+    try:
+        print(f"   -> Cloning {repo_url}...")
+        subprocess.run(
+            ['git', 'clone', repo_url, str(repo_path)],
+            check=True, capture_output=True, text=True
+        )
+
+        print("   -> Fetching all data from remote 'origin'...")
+        subprocess.run(
+            ['git', 'fetch', 'origin', '--prune', '--tags', '--force'],
+             cwd=repo_path, check=True, capture_output=True, text=True
+        )
+
+        print(f"   -> Resolving feature ref '{ref_name}'...")
+        resolved_feature_ref = _resolve_git_ref(repo_path, ref_name)
+        if not resolved_feature_ref:
+            raise Exception(f"The branch or tag '{ref_name}' could not be found.")
+
+        print("   -> Resolving base branch...")
+        resolved_base_ref = _resolve_git_ref(repo_path, 'main')
+        if not resolved_base_ref:
+            resolved_base_ref = _resolve_git_ref(repo_path, 'master')
+        if not resolved_base_ref:
+            raise Exception("Could not find a valid base branch ('main' or 'master').")
+
+        REVIEW_ENVIRONMENTS[review_id] = {
+            "path": repo_path, "temp_dir_handle": temp_dir_handle,
+            "base_ref": resolved_base_ref, "feature_ref": resolved_feature_ref
+        }
+        print(f"✓ Review environment '{review_id}' is ready.")
+        return {"review_id": review_id}
+
+    except Exception as e:
+        temp_dir_handle.cleanup()
+        error_details = str(e)
+        if hasattr(e, 'stderr') and e.stderr and isinstance(e.stderr, str):
+            error_details = e.stderr.strip()
+        print(f"Error preparing environment: {error_details}")
+        raise Exception(error_details)
+
+def get_diff_for_review(review_id: str) -> str:
+    env = REVIEW_ENVIRONMENTS.get(review_id)
+    if not env: raise FileNotFoundError(f"Review ID '{review_id}' not found or has expired.")
+    repo_path, base_ref, feature_ref = env['path'], env['base_ref'], env['feature_ref']
+    print(f"   -> Calculating diff for review '{review_id}' between '{base_ref}' and '{feature_ref}'...")
+    try:
+        diff_command = ['git', 'diff', f'{base_ref}...{feature_ref}']
+        result = subprocess.run(diff_command, cwd=repo_path, check=True, capture_output=True, text=True)
+        return result.stdout
+    except subprocess.CalledProcessError as e:
+        raise Exception(f"Failed to generate diff: {e.stderr.strip() if e.stderr else str(e)}")
+
+def cleanup_review_environment(review_id: str) -> bool:
+    env = REVIEW_ENVIRONMENTS.pop(review_id, None)
+    if env:
+        try:
+            env['temp_dir_handle'].cleanup()
+            print(f"✓ Cleaned up review environment '{review_id}'.")
+            return True
+        except Exception as e:
+            print(f"Warning: Error during cleanup of review environment '{review_id}': {e}")
+            return False
+    else:
+        print(f"Warning: Review environment '{review_id}' not found for cleanup.")
+        return False
+
+def review_code_diff(diff_text: str) -> Dict[str, str]:
+    if not diff_text.strip(): return {"review": "No changes detected between the references. The review is complete."}
+    prompt = f"You are an expert Senior Software Engineer...\n---\nGIT DIFF\n```diff\n{diff_text}\n```\nNow, provide your review."
+    try:
+        return {"review": generate_text(prompt, model_name='qwen3:4b')}
+    except Exception as e:
+        return {"review": f"Error occurred during code review analysis: {str(e)}"}
+
+def get_active_review_count() -> int: return len(REVIEW_ENVIRONMENTS)
+def list_active_reviews() -> Dict[str, Dict[str, str]]:
+    summary = {}
+    for r_id, env in REVIEW_ENVIRONMENTS.items():
+        summary[r_id] = {"base": env["base_ref"], "feat": env["feature_ref"], "path": str(env["path"])}
+    return summary
+
+--- FILE_END: backend/lumiere_core/services/review_service.py ---
+
+
+--- FILE_START: backend/lumiere_core/services/__init__.py ---
+# In ~/lumiere_semantique/backend/lumiere_core/services/__init__.py
+
+--- FILE_END: backend/lumiere_core/services/__init__.py ---
+
+
+--- FILE_START: backend/lumiere_core/services/llm.py ---
+# In lumiere_core/services/llm.py
+
+import ollama
+from typing import Dict
+
+def generate_text(prompt: str, model_name: str = 'qwen3:4b') -> str:
+    """
+    Sends a prompt to a local Ollama model and returns the response.
+
+    Args:
+        prompt: The full prompt to send to the model.
+        model_name: The name of the Ollama model to use for generation.
+
+    Returns:
+        The generated text content from the model.
+    """
+    print(f"Sending prompt to local Ollama model: '{model_name}'...")
+
+    try:
+        # The ollama client automatically connects to http://localhost:11434
+        client = ollama.Client()
+
+        # Use the 'chat' method for conversational models like qwen3
+        response = client.chat(
+            model=model_name,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ]
+        )
+
+        # Extract the text content from the response object
+        return response['message']['content']
+
+    except Exception as e:
+        # Provide a more specific error message for Ollama
+        return (f"An error occurred while communicating with the Ollama server: {e}\n"
+                f"Please ensure the Ollama server is running and the model '{model_name}' is available.")
+
+--- FILE_END: backend/lumiere_core/services/llm.py ---
+
+
+--- FILE_START: backend/lumiere_core/services/ambassador.py ---
+# In backend/lumiere_core/services/ambassador.py
+
+import os
+import re
+import time
+import subprocess
+from pathlib import Path
+from typing import Dict, Any
+from dotenv import load_dotenv
+
+from github import Github, GithubException
+
+from .github import scrape_github_issue, _parse_github_issue_url
+from .scaffolding import generate_scaffold
+from .llm import generate_text
+from ingestion.crawler import IntelligentCrawler
+
+# --- Configuration ---
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / '.env')
+GITHUB_TOKEN = os.getenv("GITHUB_ACCESS_TOKEN")
+GITHUB_USERNAME = os.getenv("GITHUB_FORK_USERNAME")
+
+if not GITHUB_TOKEN or not GITHUB_USERNAME:
+    raise ValueError("GITHUB_ACCESS_TOKEN and GITHUB_FORK_USERNAME must be set in the .env file.")
+
+g = Github(GITHUB_TOKEN)
+user = g.get_user(GITHUB_USERNAME)
+
+
+# --- NEW HELPER FUNCTION ---
+def _sanitize_branch_name(text: str) -> str:
+    """Creates a URL- and git-safe branch name from a string."""
+    text = text.lower()
+    text = re.sub(r'[\s/]+', '-', text)
+    text = re.sub(r'[^a-z0-9-]', '', text)
+    text = text.strip('-')
+    return text[:60]
+
+
+# --- The Main Orchestration Function ---
+def dispatch_pr(issue_url: str) -> Dict[str, str]:
+    """
+    Orchestrates the entire workflow: from issue analysis to pull request creation.
+    """
+    print("--- AMBASSADOR AGENT ACTIVATED ---")
+    print(f"Target Issue: {issue_url}")
+
+    # 1. GATHER INTEL & PLAN
+    # -----------------------
+    print("\n[Step 1/5] Gathering Intel & Forming a Plan...")
+    try:
+        issue_data = scrape_github_issue(issue_url)
+        if not issue_data:
+            raise ValueError("Failed to scrape issue data from GitHub.")
+
+        parsed_url = _parse_github_issue_url(issue_url)
+        if not parsed_url:
+            raise ValueError("Could not parse the provided issue URL.")
+        owner, repo_name, issue_number = parsed_url
+
+        repo_full_name = f"{owner}/{repo_name}"
+        repo_id = repo_full_name.replace("/", "_")
+
+        file_match = re.search(r'in `(\w+\.py)`', issue_data["description"])
+        if not file_match:
+            raise ValueError("Could not determine the target file from the issue description.")
+        target_file = file_match.group(1)
+
+        instruction = f"""
+        Analyze the following GitHub issue and fix the bug described.
+        Issue Title: {issue_data['title']}
+        Issue Body: {issue_data['description']}
+        The bug is located in the file: {target_file}
+        """
+        print(f"✓ Plan established: Fix bug in '{target_file}' based on issue #{issue_number}.")
+    except Exception as e:
+        print(f"Error during Intel Gathering: {e}")
+        return {"error": f"Failed during intel gathering: {e}"}
+
+    # 2. GENERATE THE FIX
+    # -------------------
+    print(f"\n[Step 2/5] Generating Code Fix for '{target_file}'...")
+    try:
+        scaffold_result = generate_scaffold(repo_id, target_file, instruction)
+        if "error" in scaffold_result:
+            raise ValueError(f"Scaffolding failed: {scaffold_result['error']}")
+        fixed_code = scaffold_result["generated_code"]
+        print("✓ Code fix generated successfully.")
+    except Exception as e:
+        print(f"Error during Code Generation: {e}")
+        return {"error": f"Failed during code generation: {e}"}
+
+    # 3. PREPARE THE REPOSITORY
+    # -------------------------
+    print("\n[Step 3/5] Preparing Repository...")
+    try:
+        upstream_repo = g.get_repo(repo_full_name)
+        working_repo = None
+
+        if upstream_repo.owner.login == GITHUB_USERNAME:
+            print(f"✓ Target repo is owned by '{GITHUB_USERNAME}'. Skipping fork.")
+            working_repo = upstream_repo
+        else:
+            print(f"Target repo is owned by '{upstream_repo.owner.login}'. Attempting to find or create fork.")
+            try:
+                working_repo = g.get_repo(f"{GITHUB_USERNAME}/{repo_name}")
+                print(f"✓ Fork '{working_repo.full_name}' already exists.")
+            except GithubException:
+                print("Fork not found. Creating fork...")
+                # --- THIS IS THE CORRECTED LINE ---
+                # The 'create_fork()' method is called on the repository you want to fork.
+                working_repo = upstream_repo.create_fork()
+                print(f"✓ Fork created at '{working_repo.full_name}'. Waiting for it to be ready...")
+                time.sleep(10)
+
+        with IntelligentCrawler(repo_url=working_repo.clone_url) as crawler:
+            repo_path = crawler.repo_path
+
+            sanitized_title = _sanitize_branch_name(issue_data['title'])
+            branch_name = f"lumiere-fix/{issue_number}-{sanitized_title}"
+            print(f"✓ Cloned {working_repo.full_name} to '{repo_path}'")
+
+            # 4. APPLY THE FIX
+            # ----------------
+            print(f"\n[Step 4/5] Applying Fix on new branch '{branch_name}'...")
+            subprocess.run(['git', 'checkout', '-b', branch_name], cwd=repo_path, check=True)
+            (repo_path / target_file).write_text(fixed_code)
+            commit_prompt = f"Based on the issue title '{issue_data['title']}', write a concise, one-line commit message following the Conventional Commits specification (e.g., 'fix: ...')."
+            raw_commit_message = generate_text(commit_prompt, model_name='qwen3:4b')
+            commit_message = re.sub(r'</?think>.*?</think>', '', raw_commit_message, flags=re.DOTALL).strip()
+
+            subprocess.run(['git', 'add', target_file], cwd=repo_path, check=True)
+            subprocess.run(['git', 'commit', '-m', commit_message], cwd=repo_path, check=True)
+            print(f"✓ Committed changes with message: \"{commit_message}\"")
+            subprocess.run(['git', 'push', '--set-upstream', 'origin', branch_name], cwd=repo_path, check=True)
+            print("✓ Pushed new branch to the working repository.")
+
+            # 5. CREATE PULL REQUEST
+            # ----------------------
+            print("\n[Step 5/5] Creating Pull Request...")
+            pr_title = f"Fix: {issue_data['title']} (Closes #{issue_number})"
+            pr_body = f"""
+This pull request was automatically generated by the Lumière Sémantique 'Ambassador' agent to address Issue #{issue_number}.
+
+### Analysis (Pre-flight Briefing)
+The issue describes a bug in `{target_file}`. The function was incorrectly performing addition instead of subtraction.
+
+### Changes
+- Modified `{target_file}` to correctly implement the subtraction logic.
+- This change is validated by the existing test suite.
+            """
+            head_branch = f"{working_repo.owner.login}:{branch_name}"
+
+            print("\n--- Pre-PR Sanity Checks ---")
+            print("Waiting 3 seconds for GitHub's systems to sync...")
+            time.sleep(3)
+
+            try:
+                remote_branch = working_repo.get_branch(branch_name)
+                print(f"✓ Branch '{branch_name}' confirmed to exist on {working_repo.full_name} (SHA: {remote_branch.commit.sha})")
+            except GithubException as e:
+                print(f"✗ CRITICAL ERROR: Branch '{branch_name}' not found on {working_repo.full_name} after push. {e}")
+                return {"error": f"Branch not found after push: {e}"}
+
+            print("--- Attempting PR Creation ---")
+            try:
+                pull_request = upstream_repo.create_pull(
+                    title=pr_title,
+                    body=pr_body,
+                    head=head_branch,
+                    base="main"
+                )
+                print(f"✓ Pull Request created successfully: {pull_request.html_url}")
+                print("\n--- AMBASSADOR AGENT MISSION COMPLETE ---")
+                return {"status": "success", "pull_request_url": pull_request.html_url}
+            except GithubException as e:
+                print(f"✗ GitHub API Error during PR Creation: {e}")
+                print(f"  Status: {e.status}")
+                print(f"  Data: {e.data}")
+                raise e
+
+    except Exception as e:
+        print(f"Error during Git Operations or PR Creation: {e}")
+        if isinstance(e, subprocess.CalledProcessError):
+            print(f"STDERR: {e.stderr}")
+        return {"error": f"Failed during repository operations: {e}"}
+
+--- FILE_END: backend/lumiere_core/services/ambassador.py ---
+
+
+--- FILE_START: backend/lumiere_core/services/scaffolding.py ---
+# In lumiere_core/services/scaffolding.py
+import json
+from pathlib import Path
+from typing import Dict, Optional
+
+from .ollama import search_index
+from .llm import generate_text
+# --- NEW: Import the shared cleaning utility ---
+from .utils import clean_llm_code_output
+
+def _get_file_content_from_cortex(repo_id: str, target_file_path: str) -> Optional[str]:
+    cortex_path = Path(f"{repo_id}_cortex.json")
+    if not cortex_path.exists():
+        print(f"Error: Cortex file not found at {cortex_path}")
+        return None
+    with open(cortex_path, 'r', encoding='utf-8') as f:
+        cortex_data = json.load(f)
+    for file_data in cortex_data.get('files', []):
+        if file_data.get('file_path') == target_file_path:
+            return file_data.get('raw_content')
+    return None
+
+def generate_scaffold(repo_id: str, target_file: str, instruction: str) -> Dict[str, str]:
+    """
+    The core logic for the Code Scaffolding Agent.
+    """
+    print(f"Initiating Scaffolding Agent for '{target_file}' in repo '{repo_id}'")
+
+    print("   -> Step 1: Retrieving original file content...")
+    original_content = _get_file_content_from_cortex(repo_id, target_file)
+    if original_content is None:
+        return {"error": f"File '{target_file}' not found in the indexed context for repo '{repo_id}'."}
+
+    print("   -> Step 2: Gathering additional context with RAG...")
+    index_path, map_path = f"{repo_id}_faiss.index", f"{repo_id}_id_map.json"
+    search_query = f"How to implement the following change in the file {target_file}: {instruction}"
+    context_chunks = search_index(query_text=search_query, model_name='snowflake-arctic-embed2:latest', index_path=index_path, map_path=map_path, k=5)
+    rag_context_string = "\n\n".join([f"--- Context from file: {chunk['file_path']} ---\n{chunk['text']}" for chunk in context_chunks])
+
+    print("   -> Step 3: Constructing advanced scaffolding prompt...")
+    prompt = f"""You are an expert AI pair programmer...
+---
+### USER INSTRUCTION
+{instruction}
+---
+### ORIGINAL FILE CONTENT: {target_file}
+{original_content}
+---
+### ADDITIONAL RELEVANT CONTEXT
+{rag_context_string}
+---
+Now, provide the full, modified content for the file '{target_file}'.
+"""
+
+    print(f"   -> Step 4: Sending request to the default code generation model...")
+    raw_generated_code = generate_text(prompt)
+
+    print("   -> Step 5: Cleaning and finalizing the generated code...")
+    final_code = clean_llm_code_output(raw_generated_code)
+
+    return {"generated_code": final_code}
+
+--- FILE_END: backend/lumiere_core/services/scaffolding.py ---
+
+
+--- FILE_START: backend/lumiere_core/services/utils.py ---
+# In ~/lumiere_semantique/backend/lumiere_core/services/utils.py
+# In lumiere_core/services/utils.py
+import re
+
+def clean_llm_code_output(raw_code: str) -> str:
+    """
+    [Robustness] Removes Markdown code fences and extraneous whitespace from LLM output.
+
+    This function uses a regular expression to find and remove
+    common Markdown code block fences (like ```python or ```) from the start
+    and end of the string. It also strips any leading or trailing whitespace.
+    This is a shared utility to ensure all code-generating agents produce
+    clean, machine-readable output.
+    """
+    # This regex matches an optional language specifier (like 'python', 'toml')
+    # and the code fences themselves at the start and end of the string.
+    code_fence_pattern = r"^\s*```[a-zA-Z]*\n?|```\s*$"
+    cleaned_code = re.sub(code_fence_pattern, '', raw_code)
+    return cleaned_code.strip()
+
+--- FILE_END: backend/lumiere_core/services/utils.py ---
+
+
+--- FILE_START: backend/lumiere_core/services/strategist.py ---
+# In backend/lumiere_core/services/strategist.py
+
+import json
+import re  # <--- THE MISSING IMPORT
+from typing import Dict, List, Any
+
+from . import github
+from . import ambassador
+from .llm import generate_text
+
+def analyze_and_prioritize(repo_url: str, auto_dispatch_config: dict) -> Dict[str, Any]:
+    """
+    The core logic for The Strategist agent.
+    Fetches all open issues, uses an LLM to prioritize them, and optionally
+    dispatches the Ambassador agent to fix the top-priority issues.
+    """
+    print("--- STRATEGIST AGENT ACTIVATED ---")
+    print(f"Analyzing repository: {repo_url}")
+
+    # Step 1 & 2: Fetch and Enrich All Open Issues
+    print("\n[Step 1/3] Fetching and enriching all open issues...")
+
+    # A more robust way to get the repo_full_name from any valid repo URL
+    match = re.search(r"github\.com/([^/]+)/([^/]+)", repo_url)
+    if not match:
+        return {"error": f"Could not parse repository name from URL: {repo_url}"}
+    repo_full_name = f"{match.group(1)}/{match.group(2)}"
+
+    raw_issues = github.list_open_issues(repo_full_name)
+    if not raw_issues:
+        return {"analysis_summary": "No open issues found for this repository.", "prioritized_issues": []}
+
+    enriched_issues = []
+    issues_for_prompt = ""
+    for issue_stub in raw_issues:
+        issue_details = github.scrape_github_issue(issue_stub['url'])
+        if issue_details:
+            enriched_issue_data = {**issue_stub, **issue_details}
+            # The 'labels' are part of the raw issue data from list_open_issues, let's ensure they are added.
+            # Correction: get_issues() provides label objects, not simple strings. We need to extract their names.
+            # For now, this part of the enrichment logic can be improved later.
+            enriched_issues.append(enriched_issue_data)
+            issues_for_prompt += f"### Issue #{issue_stub['number']}: {issue_stub['title']}\n{issue_details['description']}\n\n---\n\n"
+
+    print(f"✓ Found and enriched {len(enriched_issues)} open issues.")
+
+    # Step 3: Use LLM to score and justify prioritization
+    print("\n[Step 2/3] Submitting issues to LLM for prioritization analysis...")
+
+    prompt = f"""You are "The Strategist", an expert engineering manager for the Lumière Sémantique project. Your mission is to analyze a list of open GitHub issues and prioritize them.
+
+You MUST produce a valid JSON array as your output. For each issue, create a JSON object with these exact fields:
+- "issue_number": The integer issue number.
+- "score": An integer from 0 to 100, where 100 is most critical.
+- "justification": A concise, one-sentence explanation for your score.
+
+SCORING CRITERIA:
+- **Critical (90-100):** Crashes, data corruption, security vulnerabilities, broken core features.
+- **High (70-89):** Major feature bugs, performance problems, incorrect calculations.
+- **Medium (40-69):** Minor bugs, UI/UX issues, dependency updates.
+- **Low (0-39):** Feature requests, documentation, questions, refactoring.
+
+Analyze the following issues and provide ONLY the JSON array as your response.
+
+--- START OF ISSUES ---
+{issues_for_prompt}
+--- END OF ISSUES ---
+"""
+
+    llm_response_str = generate_text(prompt, model_name='qwen3:4b')
+
+    try:
+        # Clean the response to ensure it's a valid JSON array
+        json_str_match = re.search(r'\[.*\]', llm_response_str, re.DOTALL)
+        if not json_str_match:
+            raise json.JSONDecodeError("No JSON array found in LLM response", ll_response_str, 0)
+
+        prioritization_data = json.loads(json_str_match.group(0))
+
+        priority_map = {item['issue_number']: item for item in prioritization_data}
+
+    except (json.JSONDecodeError, KeyError) as e:
+        print(f"Error parsing LLM response: {e}\nLLM Response was:\n{llm_response_str}")
+        return {"error": "Failed to parse prioritization data from LLM.", "llm_response": llm_response_str}
+
+    print("✓ LLM analysis complete.")
+
+    # Step 4 & 5: Merge data, sort, and auto-dispatch
+    print("\n[Step 3/3] Finalizing report and handling auto-dispatch...")
+
+    final_ranked_list = []
+    for issue in enriched_issues:
+        issue_number = issue['number']
+        if issue_number in priority_map:
+            issue.update(priority_map[issue_number])
+            issue['dispatch_status'] = 'manual_review_required'
+            final_ranked_list.append(issue)
+
+    final_ranked_list.sort(key=lambda x: x.get('score', 0), reverse=True)
+
+    dispatches_made = 0
+    if auto_dispatch_config.get("enabled", False):
+        print(f"Auto-dispatch is ENABLED. Looking for issues with labels: {auto_dispatch_config.get('dispatch_labels', [])}")
+        for issue in final_ranked_list:
+            if dispatches_made >= auto_dispatch_config.get("max_dispatches", 0):
+                break
+
+            # This logic will be improved later when we properly fetch labels
+            issue_labels = [label for label in auto_dispatch_config.get('dispatch_labels', []) if label.lower() in issue['title'].lower()]
+
+            if issue_labels:
+                print(f"Found matching issue #{issue['number']} for auto-dispatch. Dispatching Ambassador...")
+                dispatch_result = ambassador.dispatch_pr(issue['url'])
+
+                if 'error' not in dispatch_result:
+                    issue['dispatch_status'] = 'dispatched'
+                    issue['pr_url'] = dispatch_result.get('pull_request_url')
+                    dispatches_made += 1
+                else:
+                    issue['dispatch_status'] = 'dispatch_failed'
+                    issue['error_message'] = dispatch_result.get('error')
+
+    summary = f"Analyzed {len(final_ranked_list)} open issues. "
+    if dispatches_made > 0:
+        summary += f"Automatically dispatched Ambassador for {dispatches_made} issue(s)."
+
+    for i, issue in enumerate(final_ranked_list):
+        issue['rank'] = i + 1
+
+    return {
+        "repository": repo_full_name,
+        "analysis_summary": summary,
+        "prioritized_issues": final_ranked_list
+    }
+
+--- FILE_END: backend/lumiere_core/services/strategist.py ---
+
+
+--- FILE_START: backend/lumiere_core/services/github.py ---
+# In backend/lumiere_core/services/github.py
+
+import os
+import re
+from datetime import datetime, timezone
+from typing import Dict, Optional, Tuple, List, Any
+from github import Github, GithubException, PaginatedList
+from dotenv import load_dotenv
+
+load_dotenv()
+
+GITHUB_TOKEN = os.getenv("GITHUB_ACCESS_TOKEN")
+if not GITHUB_TOKEN:
+    print("WARNING: GITHUB_ACCESS_TOKEN not found. API calls will be heavily rate-limited.")
+    g = Github()
+else:
+    g = Github(GITHUB_TOKEN)
+
+
+def _paginated_to_list(paginated_list: PaginatedList, max_items: int = 10) -> List[Dict[str, Any]]:
+    items = []
+    for i, item in enumerate(paginated_list):
+        if i >= max_items:
+            break
+        item_data = {
+            "name": item.name,
+            "full_name": item.full_name,
+            "description": item.description,
+            "html_url": item.html_url,
+            "language": item.language,
+            "stargazers_count": item.stargazers_count
+        }
+        items.append(item_data)
+    return items
+
+
+def get_user_profile(username: str) -> Optional[Dict[str, Any]]:
+    try:
+        user = g.get_user(username)
+        return {
+            "login": user.login, "name": user.name, "bio": user.bio,
+            "html_url": user.html_url, "public_repos": user.public_repos,
+            "followers": user.followers, "following": user.following,
+        }
+    except GithubException:
+        return None
+
+def get_user_repos(username: str) -> List[Dict[str, Any]]:
+    try:
+        user = g.get_user(username)
+        return _paginated_to_list(user.get_repos(sort='updated'), max_items=10)
+    except GithubException:
+        return []
+
+def get_user_starred(username: str) -> List[Dict[str, Any]]:
+    try:
+        user = g.get_user(username)
+        return _paginated_to_list(user.get_starred(), max_items=10)
+    except GithubException:
+        return []
+
+def get_user_comment_threads(username: str) -> List[Dict[str, Any]]:
+    threads = []
+    try:
+        user = g.get_user(username)
+        events = user.get_events()
+        comment_events_checked = 0
+        max_comments_to_check = 5
+        for event in events:
+            if comment_events_checked >= max_comments_to_check: break
+            if event.type in ['IssueCommentEvent', 'PullRequestReviewCommentEvent']:
+                comment_events_checked += 1
+                payload, comment_data, issue_data = event.payload, payload.get('comment'), payload.get('issue', payload.get('pull_request'))
+                if not comment_data or not issue_data: continue
+                if comment_data['user']['login'] != username: continue
+                repo_name, issue_number = event.repo.name, issue_data['number']
+                created_at_dt = datetime.fromisoformat(comment_data['created_at'].replace('Z', '+00:00'))
+                issue = g.get_repo(repo_name).get_issue(number=issue_number)
+                user_comment = {"id": comment_data['id'], "body": comment_data['body'], "html_url": comment_data['html_url']}
+                replies = []
+                for reply_comment in issue.get_comments(since=created_at_dt):
+                    if reply_comment.user.login != username and reply_comment.id != user_comment['id']:
+                        replies.append({"user": reply_comment.user.login, "body": reply_comment.body, "html_url": reply_comment.html_url})
+                threads.append({
+                    "repo_name": repo_name, "issue_number": issue_number, "issue_title": issue_data['title'],
+                    "issue_url": issue_data['html_url'], "user_comment": user_comment, "replies": replies
+                })
+        return threads
+    except GithubException as e:
+        print(f"GitHub API Error while fetching comment threads: {e}")
+        return []
+
+def _parse_github_issue_url(issue_url: str) -> Optional[Tuple[str, str, int]]:
+    match = re.match(r"https://github\.com/([^/]+)/([^/]+)/(?:issues|pull)/(\d+)", issue_url)
+    if match:
+        owner, repo_name, issue_number_str = match.groups()
+        return owner, repo_name, int(issue_number_str)
+    return None
+
+def scrape_github_issue(issue_url: str) -> Optional[Dict[str, str]]:
+    print(f"Fetching GitHub issue via API: {issue_url}")
+    parsed_url = _parse_github_issue_url(issue_url)
+    if not parsed_url:
+        print(f"Error: Could not parse GitHub issue URL: {issue_url}")
+        return None
+    owner, repo_name, issue_number = parsed_url
+    repo_full_name = f"{owner}/{repo_name}"
+    try:
+        repo = g.get_repo(repo_full_name)
+        issue = repo.get_issue(number=issue_number)
+        title, description = issue.title, issue.body if issue.body else ""
+        full_text_query, repo_url = f"Issue Title: {title}\n\nDescription:\n{description}", f"https://github.com/{owner}/{repo_name}"
+        return {"title": title, "description": description, "full_text_query": full_text_query, "repo_url": repo_url}
+    except GithubException as e:
+        print(f"GitHub API Error: {e.status}, {e.data}")
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred during GitHub API call: {e}")
+        return None
+
+def list_open_issues(repo_full_name: str) -> List[Dict[str, Any]]:
+    """
+    Fetches a list of all open issues for a given repository.
+    """
+    print(f"Fetching open issues for repository: {repo_full_name}")
+    try:
+        repo = g.get_repo(repo_full_name)
+        open_issues = repo.get_issues(state='open')
+        issues_list = []
+        for issue in open_issues:
+            if not issue.pull_request:
+                issues_list.append({
+                    "number": issue.number,
+                    "title": issue.title,
+                    "url": issue.html_url,
+                    "author": issue.user.login,
+                })
+        return issues_list
+    except GithubException as e:
+        print(f"GitHub API Error while listing issues: {e}")
+        return []
+
+--- FILE_END: backend/lumiere_core/services/github.py ---
+
+
+--- FILE_START: backend/lumiere_core/services/testing.py ---
+# In ~/lumiere_semantique/backend/lumiere_core/services/testing.py
+# In lumiere_core/services/testing.py
+from typing import Dict, List, Optional
+import os
+import logging
+
+from .ollama import search_index
+from .llm import generate_text
+# --- NEW: Import the shared cleaning utility ---
+from .utils import clean_llm_code_output
+
+# Set up logging for better debugging
+logger = logging.getLogger(__name__)
+
+def generate_tests_for_code(repo_id: str, new_code: str, instruction: str) -> Dict[str, str]:
+    """
+    The core logic for the Test Generation Agent.
+
+    Args:
+        repo_id: Identifier for the repository
+        new_code: The code that needs tests generated for it
+        instruction: Additional instructions for test generation
+
+    Returns:
+        Dictionary containing the generated tests
+    """
+    print(f"Initiating Test Generation Agent for repo '{repo_id}'")
+
+    if not repo_id or not new_code:
+        return {"generated_tests": "", "error": "Missing required parameters: repo_id and new_code"}
+
+    try:
+        # --- Step 1: Finding existing test patterns with RAG ---
+        print("   -> Step 1: Finding existing test patterns with RAG...")
+        index_path = f"{repo_id}_faiss.index"
+        map_path = f"{repo_id}_id_map.json"
+        search_query = f"Example test cases for python code like this: {instruction}"
+
+        try:
+            context_chunks = search_index(
+                query_text=search_query,
+                model_name='snowflake-arctic-embed2:latest',
+                index_path=index_path,
+                map_path=map_path,
+                k=7
+            )
+        except Exception as e:
+            print(f"   -> Warning: RAG search failed: {e}. Proceeding without context.")
+            context_chunks = []
+
+        test_context_string = ""
+        found_test_files = set()
+
+        for chunk in context_chunks:
+            file_path = chunk.get('file_path', '')
+            chunk_text = chunk.get('text', '')
+
+            if 'test' in file_path.lower() and file_path not in found_test_files and chunk_text:
+                test_context_string += f"--- Example test from file '{file_path}' ---\n{chunk_text}\n\n"
+                found_test_files.add(file_path)
+
+        if not test_context_string:
+            test_context_string = "No specific test patterns found. Please generate a standard pytest function."
+            print("   -> Warning: No existing test files found via RAG. Will generate a generic test.")
+        else:
+            print(f"   -> Found test patterns from files: {list(found_test_files)}")
+
+        # --- Step 2: The Reinforced Prompt ---
+        print("   -> Step 2: Constructing reinforced test generation prompt...")
+        prompt = f"""You are an expert QA Engineer and Python programmer. Your task is to write a new unit test for a piece of code.
+
+**YOUR INSTRUCTIONS:**
+1.  **Analyze "EXISTING TEST EXAMPLES"** to understand the project's testing style. Pay close attention:
+    *   Are the tests inside a `class`?
+    *   Do they use `self.assertEqual`, or plain `assert`?
+    *   Are there fixtures or `setup` methods?
+2.  **Analyze the "NEW CODE TO BE TESTED"** to understand its functionality.
+3.  **Write a new test function.** It is CRITICAL that you exactly match the style of the examples. If the examples are standalone functions (e.g., `def test_...():`), your test MUST also be a standalone function. DO NOT invent a class if the examples do not use one.
+4.  **Output ONLY raw Python code.** Do not include any explanations, commentary, or Markdown fences.
+
+---
+### EXISTING TEST EXAMPLES
+{test_context_string}
+---
+### NEW CODE TO BE TESTED
+```python
+{new_code}
+```
+
+Now, generate ONLY the new, stylistically-consistent test function."""
+
+        # --- Step 3: Generate the Test Code ---
+        print("   -> Step 3: Sending request to code generation model 'qwen2.5-coder:3b'...")
+        try:
+            raw_generated_tests = generate_text(prompt, model_name='qwen2.5-coder:3b')
+        except Exception as e:
+            print(f"   -> Error: Failed to generate tests with LLM: {e}")
+            return {"generated_tests": "", "error": f"LLM generation failed: {str(e)}"}
+
+        # --- Step 4: Clean the output ---
+        print("   -> Step 4: Cleaning and finalizing the generated test code...")
+        try:
+            final_tests = clean_llm_code_output(raw_generated_tests)
+        except Exception as e:
+            print(f"   -> Warning: Failed to clean LLM output: {e}. Using raw output.")
+            final_tests = raw_generated_tests
+
+        print("   -> ✓ Test generation completed successfully.")
+        return {"generated_tests": final_tests}
+
+    except Exception as e:
+        error_msg = f"Unexpected error in test generation: {str(e)}"
+        print(f"   -> Error: {error_msg}")
+        logger.error(error_msg, exc_info=True)
+        return {"generated_tests": "", "error": error_msg}
+
+def validate_test_code(test_code: str) -> Dict[str, any]:
+    """
+    Validates the generated test code for basic syntax and structure.
+
+    Args:
+        test_code: The generated test code to validate
+
+    Returns:
+        Dictionary with validation results
+    """
+    validation_result = {
+        "is_valid": False,
+        "has_test_function": False,
+        "syntax_errors": [],
+        "warnings": []
+    }
+
+    if not test_code or not test_code.strip():
+        validation_result["syntax_errors"].append("Test code is empty")
+        return validation_result
+
+    # Check for basic test function pattern
+    if "def test_" in test_code:
+        validation_result["has_test_function"] = True
+    else:
+        validation_result["warnings"].append("No test function found (should start with 'def test_')")
+
+    # Basic syntax validation
+    try:
+        compile(test_code, '<string>', 'exec')
+        validation_result["is_valid"] = True
+    except SyntaxError as e:
+        validation_result["syntax_errors"].append(f"Syntax error: {str(e)}")
+    except Exception as e:
+        validation_result["syntax_errors"].append(f"Compilation error: {str(e)}")
+
+    return validation_result
+
+def generate_test_suggestions(code_snippet: str) -> List[str]:
+    """
+    Generates suggestions for what types of tests should be written for the given code.
+
+    Args:
+        code_snippet: The code to analyze for test suggestions
+
+    Returns:
+        List of test suggestions
+    """
+    suggestions = []
+
+    if not code_snippet:
+        return suggestions
+
+    code_lower = code_snippet.lower()
+
+    # Basic suggestions based on code patterns
+    if "def " in code_lower:
+        suggestions.append("Test the function with valid inputs")
+        suggestions.append("Test edge cases and boundary conditions")
+        suggestions.append("Test with invalid inputs to verify error handling")
+
+    if "class " in code_lower:
+        suggestions.append("Test class initialization")
+        suggestions.append("Test public methods")
+        suggestions.append("Test method interactions")
+
+    if "if " in code_lower or "elif " in code_lower:
+        suggestions.append("Test all conditional branches")
+
+    if "for " in code_lower or "while " in code_lower:
+        suggestions.append("Test loop behavior with different iteration counts")
+        suggestions.append("Test empty collections or zero iterations")
+
+    if "try:" in code_lower or "except" in code_lower:
+        suggestions.append("Test exception handling paths")
+        suggestions.append("Test successful execution without exceptions")
+
+    if "return " in code_lower:
+        suggestions.append("Verify return values for different inputs")
+
+    # Add default suggestions if none found
+    if not suggestions:
+        suggestions = [
+            "Test basic functionality",
+            "Test with edge cases",
+            "Test error conditions"
+        ]
+
+    return suggestions
+
+--- FILE_END: backend/lumiere_core/services/testing.py ---
+
+
+--- FILE_START: backend/lumiere_core/services/profile_service.py ---
+# In backend/lumiere_core/services/profile_service.py
+from typing import Dict, Any
+from . import github
+from .llm import generate_text
+
+def _format_data_for_llm(profile_data: Dict[str, Any]) -> str:
+    """Formats the aggregated GitHub data into a text block for the LLM."""
+
+    user = profile_data['user_profile']
+    text = f"""
+# GitHub User Profile Analysis for: {user['login']} ({user.get('name', 'N/A')})
+Bio: {user.get('bio', 'N/A')}
+Followers: {user.get('followers', 0)} | Following: {user.get('following', 0)}
+Public Repos: {user.get('public_repos', 0)}
+
+---
+## Owned Repositories (Sample)
+"""
+    if profile_data['repositories']:
+        for repo in profile_data['repositories'][:5]:
+            text += f"- **{repo['name']}**: {repo.get('language', 'N/A')} | ☆{repo['stargazers_count']} | {repo.get('description', 'No description')}\n"
+    else:
+        text += "No public repositories found.\n"
+
+    text += "\n---"
+    text += "\n## Starred Repositories (Sample)\n"
+    if profile_data['starred_repositories']:
+        for repo in profile_data['starred_repositories'][:5]:
+             text += f"- **{repo['full_name']}**: {repo.get('description', 'No description')}\n"
+    else:
+        text += "No starred repositories found.\n"
+
+    text += "\n---"
+    text += "\n## Recent Issue/PR Comments & Replies by {user['login']}\n"
+    if profile_data['comment_threads']:
+        for thread in profile_data['comment_threads']:
+            text += f"\nOn repo `{thread['repo_name']}` (Issue/PR #{thread['issue_number']}):\n"
+            text += f"  - **Their Comment**: \"{thread['user_comment']['body']}\"\n"
+            if thread['replies']:
+                for reply in thread['replies']:
+                    text += f"    - **Reply from {reply['user']}**: \"{reply['body']}\"\n"
+            else:
+                text += "    - No replies to this comment found.\n"
+    else:
+        text += "No recent comments found.\n"
+
+    return text
+
+def generate_profile_review(username: str) -> Dict[str, Any]:
+    """
+    The core logic for the Chronicler Agent.
+    Fetches a user's GitHub activity and generates a narrative summary.
+    """
+    print(f"Initiating Chronicler Agent for user '{username}'")
+
+    print("   -> Step 1: Fetching profile data from GitHub API...")
+    user_profile = github.get_user_profile(username)
+    if not user_profile:
+        raise FileNotFoundError(f"User '{username}' not found on GitHub.")
+
+    repositories = github.get_user_repos(username)
+    starred = github.get_user_starred(username)
+    comment_threads = github.get_user_comment_threads(username)
+
+    raw_data = {
+        "user_profile": user_profile, "repositories": repositories,
+        "starred_repositories": starred, "comment_threads": comment_threads,
+    }
+
+    print("   -> Step 2: Formatting data and constructing FINAL prompt for LLM...")
+    context_string = _format_data_for_llm(raw_data)
+
+    # --- FINAL, MOST DIRECT PROMPT ---
+    prompt = f"""You are an expert GitHub profile analyst. Your task is to analyze the user '{username}' based ONLY on the provided data.
+
+**CRITICAL INSTRUCTION: Your entire analysis MUST be about the user '{username}'. Do NOT summarize the technical problems in the comments. Instead, use the comments to understand the USER'S BEHAVIOR.**
+
+Generate a "Developer Profile Briefing" in Markdown with these exact sections:
+
+### 1. Identity & Technical Focus
+*   Based on their bio, owned repos, and starred repos, what are '{username}'s primary technical interests?
+*   What are their main programming languages? (e.g., JavaScript, C++, Python)
+
+### 2. Community Engagement Style
+*   Based on their comments, what is '{username}'s role in the community? Are they reporting bugs, asking for help, or providing solutions?
+*   Analyze the tone and content of THEIR comments. For example: `The user provides detailed debugging reports ("Debugging Report: itzzzme/anime-api Integration Issues") suggesting a methodical approach to problem-solving.`
+
+### 3. Community Reception
+*   Look at the replies to '{username}'s comments. Are others engaging with them? Are they receiving help and feedback?
+*   Briefly summarize the nature of the replies they receive (e.g., "The user receives helpful replies from other developers, who offer suggestions and updated decryption keys.").
+
+---
+### RAW GITHUB DATA FOR {username}
+{context_string}
+---
+
+Now, generate the Developer Profile Briefing about the user '{username}'.
+"""
+
+    print("   -> Step 3: Sending request to LLM for narrative generation...")
+    summary = generate_text(prompt, model_name='qwen3:4b')
+
+    final_response = { "profile_summary": summary, "raw_data": raw_data }
+
+    return final_response
+
+--- FILE_END: backend/lumiere_core/services/profile_service.py ---
+
+
+--- FILE_START: backend/lumiere_core/services/ollama.py ---
+# In lumiere_core/services/ollama.py
+
+import ollama
+from tqdm import tqdm
+from typing import List
+import faiss
+import numpy as np
+import json
+
+def get_ollama_embeddings(chunks: List[str], model_name: str) -> List[List[float]]:
+    """
+    Generates embeddings for a list of text chunks using a local Ollama model.
+
+    Args:
+        chunks: A list of strings to be embedded.
+        model_name: The name of the Ollama model to use (e.g., 'snowflake-arctic-embed').
+
+    Returns:
+        A list of embeddings, where each embedding is a list of floats.
+    """
+    embeddings = []
+    # The ollama client automatically connects to http://localhost:11434
+    client = ollama.Client()
+
+    # Show a progress bar because this can take time
+    for text in tqdm(chunks, desc="Generating Ollama Embeddings"):
+        response = client.embeddings(model=model_name, prompt=text)
+        embeddings.append(response['embedding'])
+
+    return embeddings
+
+def search_index(query_text: str, model_name: str, index_path: str, map_path: str, k: int = 10):
+    """
+    Searches the Faiss index for the top k most similar chunks to a query.
+
+    Args:
+        query_text: The user's search query.
+        model_name: The name of the Ollama model used to create the index.
+        index_path: Path to the .index file.
+        map_path: Path to the _id_map.json file.
+        k: The number of results to return.
+
+    Returns:
+        A list of dictionaries, where each dictionary contains the chunk_id,
+        file_path, and the original text of the matching chunk.
+    """
+    print(f"Loading index '{index_path}' and map '{map_path}'...")
+    # Load the Faiss index
+    index = faiss.read_index(index_path)
+
+    # Load the ID mapping files
+    with open(map_path, 'r', encoding='utf-8') as f:
+        id_maps = json.load(f)
+    faiss_id_to_chunk_id = id_maps['faiss_id_to_chunk_id']
+    chunk_id_to_data = id_maps['chunk_id_to_data']
+
+    print(f"Generating embedding for query: '{query_text}'...")
+    # 1. Embed the query using the same Ollama model
+    client = ollama.Client()
+    response = client.embeddings(model=model_name, prompt=query_text)
+    query_vector = np.array([response['embedding']]).astype('float32')
+
+    print(f"Searching index for top {k} results...")
+    # 2. Search the Faiss index
+    distances, indices = index.search(query_vector, k)
+
+    # 3. Retrieve the results
+    results = []
+    for i in range(k):
+        faiss_id = indices[0][i]
+        chunk_id = faiss_id_to_chunk_id[faiss_id]
+        chunk_data = chunk_id_to_data[chunk_id]
+
+        results.append({
+            "chunk_id": chunk_id,
+            "file_path": chunk_data['file_path'],
+            "text": chunk_data['text'],
+            "distance": float(distances[0][i])
+        })
+
+    return results
+
+--- FILE_END: backend/lumiere_core/services/ollama.py ---
+
+
+--- FILE_START: backend/lumiere_core/wsgi.py ---
+# In ~/lumiere_semantique/backend/lumiere_core/wsgi.py
+"""
+WSGI config for backend project.
+
+It exposes the WSGI callable as a module-level variable named ``application``.
+
+For more information on this file, see
+https://docs.djangoproject.com/en/5.2/howto/deployment/wsgi/
+"""
+
+import os
+
+from django.core.wsgi import get_wsgi_application
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "backend.settings")
+
+application = get_wsgi_application()
+
+--- FILE_END: backend/lumiere_core/wsgi.py ---
+
+
+--- FILE_START: backend/run_server.sh ---
+# In ~/lumiere_semantique/backend/run_server.sh
+#!/bin/bash
+#
+# This script is the standard way to run the Lumière Sémantique development server.
+# It ensures the server always starts on the correct port (8002).
+#
+# To run:
+# 1. Make it executable: chmod +x run_server.sh
+# 2. Execute it: ./run_server.sh
+
+echo "Starting Lumière Sémantique development server on http://127.0.0.1:8002/"
+python manage.py runserver 8002
+
+--- FILE_END: backend/run_server.sh ---
+
+
+--- FILE_START: backend/.env ---
+ANTHROPIC_API_KEY="sk-ant-your-api-key-here"
+
+--- FILE_END: backend/.env ---
+
+
+--- FILE_START: backend/api/migrations/__init__.py ---
+
+--- FILE_END: backend/api/migrations/__init__.py ---
+
+
+--- FILE_START: backend/api/models.py ---
+from django.db import models
+
+# Create your models here.
+
+--- FILE_END: backend/api/models.py ---
+
+
+--- FILE_START: backend/api/__init__.py ---
+
+--- FILE_END: backend/api/__init__.py ---
+
+
+--- FILE_START: backend/api/apps.py ---
+from django.apps import AppConfig
+
+
+class ApiConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "api"
+
+--- FILE_END: backend/api/apps.py ---
+
+
+--- FILE_START: backend/api/admin.py ---
+from django.contrib import admin
+
+# Register your models here.
+
+--- FILE_END: backend/api/admin.py ---
+
+
+--- FILE_START: backend/api/tests.py ---
+from django.test import TestCase
+
+# Create your tests here.
+
+--- FILE_END: backend/api/tests.py ---
+
+
+--- FILE_START: backend/api/urls.py ---
+# In api/urls.py
+from django.urls import path
+from .views import (
+    BriefingView, ScaffoldView, TestGenerationView, RcaView,
+    DocstringGenerationView, PrepareReviewView, ExecuteReviewView,
+    ProfileReviewView, AmbassadorDispatchView, IssueListView,
+    # --- NEW IMPORT ---
+    StrategistPrioritizeView,
+)
+
+urlpatterns = [
+    # --- "Triage & Strategy" ENDPOINTS ---
+    path('issues/list/', IssueListView.as_view(), name='list_issues'),
+    path('strategist/prioritize/', StrategistPrioritizeView.as_view(), name='strategist_prioritize'),
+
+    # --- "Execution" ENDPOINTS ---
+    path('briefing/', BriefingView.as_view(), name='briefing'),
+    path('scaffold/', ScaffoldView.as_view(), name='scaffold'),
+    path('generate-tests/', TestGenerationView.as_view(), name='generate_tests'),
+    path('generate-docstring/', DocstringGenerationView.as_view(), name='generate_docstring'),
+    path('rca/', RcaView.as_view(), name='rca'),
+    path('ambassador/dispatch/', AmbassadorDispatchView.as_view(), name='ambassador_dispatch'),
+
+    # --- "Review" ENDPOINTS ---
+    path('review/prepare', PrepareReviewView.as_view(), name='prepare_review'),
+    path('review/execute', ExecuteReviewView.as_view(), name='execute_review'),
+    path('profile/review/', ProfileReviewView.as_view(), name='profile_review'),
+]
+
+--- FILE_END: backend/api/urls.py ---
+
+
+--- FILE_START: backend/api/views.py ---
+# In api/views.py
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+import os
+import json
+import traceback
+import re
+
+from lumiere_core.services.ollama import search_index
+from lumiere_core.services.llm import generate_text
+from lumiere_core.services.github import scrape_github_issue, list_open_issues
+from lumiere_core.services.scaffolding import generate_scaffold
+from lumiere_core.services.testing import generate_tests_for_code
+from lumiere_core.services.documentation import generate_docstring_for_code
+from ingestion.crawler import IntelligentCrawler
+from lumiere_core.services import review_service
+from lumiere_core.services import profile_service
+from lumiere_core.services import ambassador
+from lumiere_core.services import strategist
+
+STOP_WORDS = {
+    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'for', 'if', 'in', 'into', 'is', 'it', 'its', 'no', 'not', 'of', 'on', 'or', 'such', 'that', 'the', 'their', 'then', 'there', 'these', 'they', 'this', 'to', 'was', 'will', 'with', 'i', 'im', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 'yours', 'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', 'her', 'herself', 'it', 'itself', 'they', 'them', 'their', 'theirs', 'themselves', 'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', 'shouldn', 'now', 'd', 'll', 'm', 'o', 're', 've', 'y', 'ain', 'aren', 'couldn', 'didn', 'doesn', 'hadn', 'hasn', 'haven', 'isn', 'ma', 'mightn', 'mustn', 'needn', 'shan', 'shouldn', 'wasn', 'weren', 'won', 'wouldn', 'hi', 'everyone'
+}
+
+def _filter_blame_by_keywords(blame_output: str, keywords: set) -> str:
+    if not keywords: return ""
+    filtered_lines = [line for line in blame_output.splitlines() if any(keyword.lower() in line.lower() for keyword in keywords)]
+    return "\n".join(filtered_lines)
+
+class BriefingView(APIView):
+    def post(self, request, *args, **kwargs):
+        issue_url = request.data.get('issue_url')
+        if not issue_url: return Response({"error": "A 'issue_url' field is required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            issue_data = scrape_github_issue(issue_url)
+            if not issue_data: return Response({"error": "Failed to fetch data from the GitHub API."}, status=status.HTTP_400_BAD_REQUEST)
+            repo_url, rag_query, repo_id = issue_data['repo_url'], issue_data['full_text_query'], issue_data['repo_url'].replace("https://github.com/", "").replace("/", "_")
+            index_path, map_path = f"{repo_id}_faiss.index", f"{repo_id}_id_map.json"
+            if not os.path.exists(index_path): return Response({"error": f"The repository '{repo_id}' has not been indexed yet."}, status=status.HTTP_404_NOT_FOUND)
+            raw_keywords = set(re.findall(r'\b([A-Z][a-zA-Z0-9_]+|[a-z_]{3,})\b', rag_query))
+            keywords = {kw for kw in raw_keywords if kw.lower() not in STOP_WORDS}
+            initial_chunks = search_index(query_text=rag_query, model_name='snowflake-arctic-embed2:latest', index_path=index_path, map_path=map_path, k=15)
+            ranked_chunks = sorted([{"chunk": chunk, "score": sum(len(kw) for kw in keywords if kw.lower() in chunk['text'].lower())} for chunk in initial_chunks], key=lambda x: x['score'], reverse=True)
+            context_string = "\n\n".join([f"--- Context from file: {item['chunk']['file_path']} ---\n{item['chunk']['text']}" for item in ranked_chunks[:7]])
+            briefing_prompt = f"You are an expert Principal Engineer... GITHUB ISSUE\n{rag_query}\n---\nRELEVANT CONTEXT\n{context_string}\n---"
+            final_report = generate_text(briefing_prompt, model_name='qwen3:4b')
+            return Response({"briefing": final_report}, status=status.HTTP_200_OK)
+        except Exception as e:
+            traceback.print_exc()
+            return Response({"error": "An internal server error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class ScaffoldView(APIView):
+    def post(self, request, *args, **kwargs):
+        repo_id, target_file, instruction = request.data.get('repo_id'), request.data.get('target_file'), request.data.get('instruction')
+        if not all([repo_id, target_file, instruction]): return Response({"error": "The 'repo_id', 'target_file', and 'instruction' fields are required."}, status=status.HTTP_400_BAD_REQUEST)
+        index_path, cortex_path = f"{repo_id}_faiss.index", f"{repo_id}_cortex.json"
+        if not os.path.exists(index_path) or not os.path.exists(cortex_path): return Response({"error": f"Index and/or Cortex file for '{repo_id}' not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            result = generate_scaffold(repo_id=repo_id, target_file=target_file, instruction=instruction)
+            if "error" in result: return Response(result, status=status.HTTP_404_NOT_FOUND)
+            return Response(result, status=status.HTTP_200_OK)
+        except Exception as e:
+            traceback.print_exc()
+            return Response({"error": "An internal server error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class TestGenerationView(APIView):
+    def post(self, request, *args, **kwargs):
+        repo_id, instruction, new_code = request.data.get('repo_id'), request.data.get('instruction'), request.data.get('new_code')
+        if not all([repo_id, instruction, new_code]):
+            return Response({"error": "'repo_id', 'instruction', and 'new_code' are required."}, status=status.HTTP_400_BAD_REQUEST)
+        index_path = f"{repo_id}_faiss.index"
+        if not os.path.exists(index_path):
+            return Response({"error": f"Index for '{repo_id}' not found. Please ingest the repository first."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            result = generate_tests_for_code(repo_id=repo_id, new_code=new_code, instruction=instruction)
+            if "error" in result: return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(result, status=status.HTTP_200_OK)
+        except Exception as e:
+            print(f"An unexpected error occurred in TestGenerationView: {e}"); traceback.print_exc()
+            return Response({"error": "Internal server error.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class RcaView(APIView):
+    def post(self, request, *args, **kwargs):
+        repo_url, bug_description, target_file = request.data.get('repo_url'), request.data.get('bug_description'), request.data.get('target_file')
+        if not all([repo_url, bug_description, target_file]):
+            return Response({"error": "'repo_url', 'bug_description', 'target_file' are required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            with IntelligentCrawler(repo_url=repo_url) as crawler:
+                resolved_target_path = crawler.find_file_path(target_file)
+                if isinstance(resolved_target_path, dict): return Response(resolved_target_path, status=status.HTTP_409_CONFLICT)
+                if not resolved_target_path: return Response({"error": f"Lumière Sémantique could not find '{target_file}'."}, status=status.HTTP_404_NOT_FOUND)
+                blame_output = crawler.get_blame_for_file(resolved_target_path)
+                if "Error from" in blame_output: return Response({"error": blame_output}, status=status.HTTP_400_BAD_REQUEST)
+                raw_keywords = set(re.findall(r'`([^`]+)`|\b([a-zA-Z]{3,})\b', bug_description))
+                keywords = {item.lower() for tpl in raw_keywords for item in tpl if item and item.lower() not in STOP_WORDS}
+                filtered_blame = _filter_blame_by_keywords(blame_output, keywords)
+                if not filtered_blame:
+                    return Response({"rca_report": "### Root Cause Analysis\n\nNo relevant lines could be found in the git blame history for the keywords in the bug description. Unable to perform analysis."}, status=status.HTTP_200_OK)
+                prompt = f"""You are a software detective...
+### BUG DESCRIPTION
+{bug_description}
+---
+### PRE-FILTERED BLAME LOG for {resolved_target_path}
+This log only contains lines that include the keywords: {', '.join(keywords)}
+{filtered_blame}
+---
+Now, generate the Root Cause Analysis report.
+"""
+                raw_report = generate_text(prompt, model_name='qwen3:4b')
+                final_report = raw_report.split("</think>", 1)[-1].strip()
+                return Response({"rca_report": final_report}, status=status.HTTP_200_OK)
+        except Exception as e:
+            print(f"An unexpected error occurred in RcaView: {e}"); traceback.print_exc()
+            return Response({"error": "An internal server error.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class DocstringGenerationView(APIView):
+    def post(self, request, *args, **kwargs):
+        repo_id, instruction, new_code = request.data.get('repo_id'), request.data.get('instruction'), request.data.get('new_code')
+        if not all([repo_id, instruction, new_code]):
+            return Response({"error": "'repo_id', 'instruction', and 'new_code' are required."}, status=status.HTTP_400_BAD_REQUEST)
+        index_path = f"{repo_id}_faiss.index"
+        if not os.path.exists(index_path):
+            return Response({"error": f"Index for '{repo_id}' not found. Please ingest the repository first."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            result = generate_docstring_for_code(repo_id=repo_id, new_code=new_code, instruction=instruction)
+            if "error" in result: return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            print("✓ Docstring generation complete. Sending response to client.")
+            return Response(result, status=status.HTTP_200_OK)
+        except Exception as e:
+            print(f"An unexpected error occurred in DocstringGenerationView: {e}"); traceback.print_exc()
+            return Response({"error": "Internal server error.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class PrepareReviewView(APIView):
+    def post(self, request, *args, **kwargs):
+        repo_url = request.data.get('repo_url')
+        branch_name = request.data.get('branch_name')
+        if not all([repo_url, branch_name]):
+            return Response({"error": "'repo_url' and 'branch_name' are required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            result = review_service.prepare_review_environment(repo_url, branch_name)
+            return Response(result, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({"error": "Failed to prepare review environment.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class ExecuteReviewView(APIView):
+    def post(self, request, *args, **kwargs):
+        review_id = request.data.get('review_id')
+        if not review_id:
+            return Response({"error": "'review_id' is required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            diff_text = review_service.get_diff_for_review(review_id)
+            result = review_service.review_code_diff(diff_text)
+            return Response(result, status=status.HTTP_200_OK)
+        except FileNotFoundError as e:
+            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            print(f"An unexpected error occurred in ExecuteReviewView: {e}"); traceback.print_exc()
+            return Response({"error": "Internal server error during review execution.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        finally:
+            if review_id:
+                review_service.cleanup_review_environment(review_id)
+
+class ProfileReviewView(APIView):
+    def post(self, request, *args, **kwargs):
+        username = request.data.get('username')
+        if not username:
+            return Response({"error": "A 'username' field is required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            result = profile_service.generate_profile_review(username)
+            return Response(result, status=status.HTTP_200_OK)
+        except FileNotFoundError as e:
+            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            print(f"An unexpected error occurred in ProfileReviewView: {e}")
+            traceback.print_exc()
+            return Response({"error": "An internal server error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class AmbassadorDispatchView(APIView):
+    def post(self, request, *args, **kwargs):
+        issue_url = request.data.get('issue_url')
+        if not issue_url:
+            return Response({"error": "A 'issue_url' field is required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            result = ambassador.dispatch_pr(issue_url)
+            if "error" in result:
+                return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(result, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            print(f"An unexpected error occurred in AmbassadorDispatchView: {e}")
+            traceback.print_exc()
+            return Response({"error": "An internal server error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class IssueListView(APIView):
+    def get(self, request, *args, **kwargs):
+        repo_url = request.query_params.get('repo_url')
+        if not repo_url:
+            return Response({"error": "A 'repo_url' query parameter is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        match = re.search(r"github\.com/([^/]+)/([^/]+)", repo_url)
+        if not match:
+            return Response({"error": "Invalid 'repo_url' format. Should be like https://github.com/owner/repo"}, status=status.HTTP_400_BAD_REQUEST)
+
+        repo_full_name = f"{match.group(1)}/{match.group(2)}"
+
+        try:
+            issues = list_open_issues(repo_full_name)
+            return Response(issues, status=status.HTTP_200_OK)
+        except Exception as e:
+            traceback.print_exc()
+            return Response({"error": "An internal server error occurred while fetching issues.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class StrategistPrioritizeView(APIView):
+    def post(self, request, *args, **kwargs):
+        repo_url = request.data.get('repo_url')
+        if not repo_url:
+            return Response({"error": "A 'repo_url' field is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        auto_dispatch_config = request.data.get('auto_dispatch_config', {"enabled": False})
+
+        try:
+            result = strategist.analyze_and_prioritize(repo_url, auto_dispatch_config)
+            if "error" in result:
+                return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            return Response(result, status=status.HTTP_200_OK)
+        except Exception as e:
+            print(f"An unexpected error occurred in StrategistPrioritizeView: {e}")
+            traceback.print_exc()
+            return Response({"error": "An internal server error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+--- FILE_END: backend/api/views.py ---
+
+
+--- FILE_START: backend/manage.py ---
+# In ~/lumiere_semantique/backend/manage.py
+#!/usr/bin/env python
+"""Django's command-line utility for administrative tasks."""
+import os
+import sys
+
+
+def main():
+    """Run administrative tasks."""
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'lumiere_core.settings')
+    try:
+        from django.core.management import execute_from_command_line
+    except ImportError as exc:
+        raise ImportError(
+            "Couldn't import Django. Are you sure it's installed and "
+            "available on your PYTHONPATH environment variable? Did you "
+            "forget to activate a virtual environment?"
+        ) from exc
+    execute_from_command_line(sys.argv)
+
+
+if __name__ == "__main__":
+    main()
+
+--- FILE_END: backend/manage.py ---
+
+
+--- FILE_START: README.md ---
+# Lumière Sémantique
+
+--- FILE_END: README.md ---
+
+
+--- FILE_START: .gitignore ---
+# In ~/lumiere_semantique/.gitignore
+
+# --- Python / Django ---
+__pycache__/
+*.pyc
+
+# --- Virtual Environments ---
+# This will ignore venv, venv_broken, etc.
+venv/
+venv_broken/
+*.env
+.env
+
+# --- OS / IDE Files ---
+.DS_Store
+.idea/
+.vscode/
+
+# --- Database Files ---
+db.sqlite3
+*.sqlite3-journal
+
+# --- Lumière Sémantique Generated Artifacts ---
+# We don't want to commit the large index and JSON files.
+# These should be generated by anyone who clones the repo.
+*.json
+*.index
+
+# --- Django Media/Static Files ---
+media/
+static/
+
+# --- Build Artifacts ---
+build/
+dist/
+*.egg-info/
+
+--- FILE_END: .gitignore ---
+
+

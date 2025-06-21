@@ -1,7 +1,7 @@
-# In ingestion/management/commands/run_crawler.py
+# In backend/ingestion/management/commands/run_crawler.py
 
 import json
-import traceback # <-- Import the traceback module
+import traceback
 from django.core.management.base import BaseCommand
 from ingestion.crawler import IntelligentCrawler
 from ingestion.jsonifier import Jsonifier
@@ -14,39 +14,47 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         repo_url = options['repo_url']
+        # Generate the repo_id just like the API does.
         repo_id = repo_url.replace("https://github.com/", "").replace("/", "_")
 
         self.stdout.write(self.style.NOTICE(f'Starting process for {repo_id} ({repo_url})...'))
 
-        crawler = IntelligentCrawler(repo_url=repo_url)
         try:
-            files_to_process = crawler.clone_and_process()
+            # --- FIX: Use the IntelligentCrawler as a context manager ---
+            # The `with` statement correctly handles the setup (cloning) and
+            # teardown (cleanup) of the temporary repository directory.
+            with IntelligentCrawler(repo_url=repo_url) as crawler:
+                # The cloning is now handled automatically when the 'with' block is entered.
+                # We simply need to get the list of files to process.
+                files_to_process = crawler.get_file_paths()
 
-            if files_to_process:
-                self.stdout.write(self.style.SUCCESS(f'\nFound {len(files_to_process)} files. Starting JSON-ification...'))
+                if files_to_process:
+                    self.stdout.write(self.style.SUCCESS(f'\nFound {len(files_to_process)} files. Starting JSON-ification...'))
 
-                jsonifier = Jsonifier(
-                    file_paths=files_to_process,
-                    repo_root=crawler.repo_path,
-                    repo_id=repo_id
-                )
-                project_cortex = jsonifier.generate_cortex()
+                    # We now correctly pass the crawler's repo_path attribute.
+                    jsonifier = Jsonifier(
+                        file_paths=files_to_process,
+                        repo_root=crawler.repo_path,
+                        repo_id=repo_id
+                    )
+                    project_cortex = jsonifier.generate_cortex()
 
-                output_filename = f"{repo_id}_cortex.json"
-                with open(output_filename, 'w', encoding='utf-8') as f:
-                    json.dump(project_cortex, f, indent=2)
+                    output_filename = f"{repo_id}_cortex.json"
+                    with open(output_filename, 'w', encoding='utf-8') as f:
+                        json.dump(project_cortex, f, indent=2)
 
-                self.stdout.write(self.style.SUCCESS(f'✓ Project Cortex created successfully: {output_filename}'))
+                    self.stdout.write(self.style.SUCCESS(f'✓ Project Cortex created successfully: {output_filename}'))
+                    self.stdout.write(self.style.NOTICE(f"\nNext Step: Run the indexer command:"))
+                    self.stdout.write(self.style.SUCCESS(f"python manage.py run_indexer {output_filename}"))
 
-            else:
-                self.stdout.write(self.style.WARNING('No files found to process or an error occurred.'))
+
+                else:
+                    self.stdout.write(self.style.WARNING('No files found to process or an error occurred.'))
 
         except Exception as e:
-            # --- THIS PART IS NOW BETTER ---
             self.stdout.write(self.style.ERROR(f'\nAn unexpected error occurred: {e}'))
             self.stdout.write(self.style.ERROR('--- Full Traceback ---'))
-            # Print the full traceback to the console
             traceback.print_exc()
             self.stdout.write(self.style.ERROR('--- End Traceback ---'))
-        finally:
-            crawler.cleanup()
+        # NOTE: No explicit crawler.cleanup() is needed here because the
+        # `with` statement guarantees cleanup even if errors occur.

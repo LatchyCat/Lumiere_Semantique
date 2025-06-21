@@ -1,3 +1,4 @@
+# In ~/lumiere_semantique/backend/lumiere_core/wsgi.py
 """
 WSGI config for backend project.
 

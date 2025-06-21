@@ -1,3 +1,4 @@
+# In ~/lumiere_semantique/backend/lumiere_core/.gitignore
 # Python
 __pycache__/
 *.pyc
