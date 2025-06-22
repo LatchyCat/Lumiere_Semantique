@@ -48,11 +48,16 @@
 │   │   ├── services
 │   │   │   ├── __init__.py
 │   │   │   ├── ambassador.py
+│   │   │   ├── crucible.py
+│   │   │   ├── diplomat.py
 │   │   │   ├── documentation.py
+│   │   │   ├── gemini_service.py
 │   │   │   ├── github.py
-│   │   │   ├── llm.py
+│   │   │   ├── llm_service.py
+│   │   │   ├── ollama_service.py
 │   │   │   ├── ollama.py
 │   │   │   ├── profile_service.py
+│   │   │   ├── rca_service.py
 │   │   │   ├── review_service.py
 │   │   │   ├── scaffolding.py
 │   │   │   ├── strategist.py
@@ -77,17 +82,889 @@
 │   └── urllib3_urllib3_id_map.json
 ├── crawler.sh
 ├── llm_project_context.txt
+├── lumiere.py
 └── README.md
 
-10 directories, 69 files
+10 directories, 75 files
 
 --- END PROJECT STRUCTURE ---
+
+
+--- FILE_START: lumiere.py ---
+# In /Users/latchy/lumiere_semantique/lumiere.py
+
+import typer
+import requests
+import sys
+import re
+import shlex
+import difflib
+import traceback
+from typing import Optional, List, Dict, Tuple
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich.prompt import Prompt, Confirm
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
+from rich.markdown import Markdown
+from rich.text import Text
+from rich.status import Status
+from rich.live import Live
+from rich.align import Align
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.shortcuts import confirm
+from prompt_toolkit.styles import Style  
+from pathlib import Path
+import json
+import time
+from datetime import datetime
+
+# --- Global Objects & Configuration ---
+console = Console()
+history_path = Path.home() / ".lumiere" / "history.txt"
+config_path = Path.home() / ".lumiere" / "config.json"
+history_path.parent.mkdir(parents=True, exist_ok=True)
+
+# --- NEW: Centralized API URL ---
+API_BASE_URL = "http://127.0.0.1:8002/api/v1"
+
+# Create command completers for better UX
+main_commands = ['analyze', 'a', 'profile', 'p', 'config', 'c', 'help', 'h', 'exit', 'x', 'quit']
+analysis_commands = ['list', 'l', 'fix', 'f', 'briefing', 'b', 'rca', 'r', 'details', 'd', 'help', 'h', 'back', 'exit', 'quit']
+
+main_completer = WordCompleter(main_commands, ignore_case=True)
+analysis_completer = WordCompleter(analysis_commands, ignore_case=True)
+
+# --- ADDED: Style for prompt_toolkit prompt to match rich colors ---
+prompt_style = Style.from_dict({
+    'lumiere': 'bold #00ffff',  # bold cyan
+    'provider': 'yellow',
+    'separator': 'white'
+})
+
+prompt_session = PromptSession(
+    history=FileHistory(str(history_path)),
+    completer=main_completer,
+    style=prompt_style  # <--- MODIFIED
+)
+
+# --- Global CLI State ---
+cli_state = {
+    "model": None,  # Will be populated from config
+    "available_models": [],
+    "last_repo_url": None,
+    "debug_mode": False,
+}
+
+def load_config():
+    """Load configuration from file if it exists."""
+    try:
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                cli_state.update(config)
+                console.print(f"[dim]✓ Configuration loaded from {config_path}[/dim]")
+    except Exception as e:
+        console.print(f"[yellow]Warning: Could not load config: {e}[/yellow]")
+
+def save_config():
+    """Save current configuration to file."""
+    try:
+        with open(config_path, 'w') as f:
+            json.dump({
+                "model": cli_state["model"],
+                "last_repo_url": cli_state["last_repo_url"],
+                "debug_mode": cli_state["debug_mode"]
+            }, f, indent=2)
+    except Exception as e:
+        console.print(f"[yellow]Warning: Could not save config: {e}[/yellow]")
+
+def validate_github_url(url: str) -> bool:
+    """Validate that the URL is a proper GitHub repository URL."""
+    github_pattern = r'^https://github\.com/[\w\-\.]+/[\w\-\.]+/?$'
+    return bool(re.match(github_pattern, url))
+
+def format_url(url: str) -> str:
+    """Normalize GitHub URL format."""
+    url = url.strip().rstrip('/')
+    if not url.startswith('https://'):
+        if url.startswith('github.com/'):
+            url = 'https://' + url
+        elif '/' in url and not url.startswith('http'):
+            url = 'https://github.com/' + url
+    return url
+
+# --- Enhanced API Client ---
+class LumiereAPIClient:
+    def __init__(self, base_url: str = API_BASE_URL, timeout: int = 600):
+        self.base_url = base_url
+        self.timeout = timeout
+        self.session = requests.Session()  # Reuse connections
+
+    def _request(self, method: str, endpoint: str, **kwargs):
+        try:
+            if method.upper() in ["POST"]:
+                data = kwargs.get("json", {})
+                if "model" not in data:
+                    # Ensure a model is selected before making a request
+                    if not cli_state.get("model"):
+                        console.print("\n[bold red]Error: No LLM model selected.[/bold red]")
+                        console.print("Please use the [bold cyan]config[/bold cyan] command to choose a model first.")
+                        return None # Abort the request
+                    data["model"] = cli_state["model"]
+                kwargs["json"] = data
+
+            url = f"{self.base_url}/{endpoint}"
+
+            if cli_state["debug_mode"]:
+                console.print(f"[dim]DEBUG: {method} {url}[/dim]")
+                if "json" in kwargs:
+                    console.print(f"[dim]DEBUG: Payload: {kwargs['json']}[/dim]")
+
+            response = self.session.request(method, url, timeout=self.timeout, **kwargs)
+            response.raise_for_status()
+            return response.json()
+
+        except requests.exceptions.ConnectionError as e:
+            console.print(Panel(
+                f"[bold red]Cannot connect to Lumière backend[/bold red]\n"
+                f"[yellow]Expected URL:[/yellow] {self.base_url}\n"
+                f"[yellow]Error:[/yellow] {str(e)}\n\n"
+                f"[dim]💡 Make sure the backend server is running:\n"
+                f"   • Execute `cd backend && ./run_server.sh`\n"
+                f"   • Verify the URL is correct\n"
+                f"   • Check firewall settings[/dim]",
+                title="[red]Connection Error[/red]",
+                border_style="red"
+            ))
+            return None
+
+        except requests.exceptions.HTTPError as e:
+            try:
+                error_json = e.response.json()
+                error_details = error_json.get('details', str(error_json))
+                if "traceback" in error_json and cli_state["debug_mode"]:
+                    console.print(Panel(error_json['traceback'], title="[bold red]Server Traceback[/bold red]", border_style="red"))
+                console.print(Panel(
+                    f"[bold red]API Request Failed[/bold red]\n"
+                    f"[yellow]URL:[/yellow] {e.request.url}\n"
+                    f"[yellow]Status:[/yellow] {e.response.status_code}\n"
+                    f"[yellow]Error:[/yellow] {error_details}",
+                    title="[red]API Error[/red]"
+                ))
+            except:
+                console.print(Panel(
+                    f"[bold red]HTTP Error {e.response.status_code}[/bold red]\n"
+                    f"[yellow]URL:[/yellow] {e.request.url}\n"
+                    f"[yellow]Response:[/yellow] {e.response.text[:200]}...",
+                    title="[red]API Error[/red]"
+                ))
+            return None
+
+        except requests.exceptions.Timeout:
+            console.print(Panel(
+                f"[bold red]Request Timeout[/bold red]\n"
+                f"The request took longer than {self.timeout} seconds.\n"
+                f"[dim]The backend might be processing a large repository.[/dim]",
+                title="[red]Timeout Error[/red]"
+            ))
+            return None
+
+        except requests.exceptions.RequestException as e:
+            console.print(Panel(
+                f"[bold red]Request Error[/bold red]\n"
+                f"[yellow]Error:[/yellow] {str(e)}",
+                title="[red]Request Error[/red]"
+            ))
+            return None
+
+    def health_check(self) -> bool:
+        """Check if the backend is healthy."""
+        try:
+            response = self.session.get(f"{self.base_url}/health", timeout=5)
+            return response.status_code == 200
+        except:
+            return False
+
+    def list_models(self): return self._request("GET", "models/list/")
+    def get_analysis(self, repo_url: str): return self._request("POST", "strategist/prioritize/", json={"repo_url": repo_url})
+    def get_briefing(self, issue_url: str): return self._request("POST", "briefing/", json={"issue_url": issue_url})
+    def get_rca(self, repo_url: str, bug_description: str, target_file: str): return self._request("POST", "rca/", json={"repo_url": repo_url, "bug_description": bug_description, "target_file": target_file})
+    def get_profile(self, username: str): return self._request("POST", "profile/review/", json={"username": username})
+    def generate_fix(self, repo_id: str, target_file: str, instruction: str, refinement_history: Optional[List[Dict]] = None): return self._request("POST", "scaffold/", json={"repo_id": repo_id, "target_file": target_file, "instruction": instruction, "refinement_history": refinement_history or []})
+    def create_pr(self, issue_url: str, target_file: str, fixed_code: str): return self._request("POST", "ambassador/dispatch/", json={"issue_url": issue_url, "target_file": target_file, "fixed_code": fixed_code})
+    def get_diplomat_report(self, issue_title: str, issue_body: str): return self._request("POST", "diplomat/find-similar-issues/", json={"issue_title": issue_title, "issue_body": issue_body})
+    def validate_in_crucible(self, repo_url: str, target_file: str, modified_code: str): return self._request("POST", "crucible/validate/", json={"repo_url": repo_url, "target_file": target_file, "modified_code": modified_code})
+
+
+def handle_model_selection(api: "LumiereAPIClient"):
+    """
+    Guides the user through selecting an LLM provider and model.
+    """
+    console.print("\n[bold cyan]🤖 LLM Model & Provider Selection[/bold cyan]")
+    with Status("[cyan]Fetching available models from backend...[/cyan]"):
+        available_models_data = api.list_models()
+
+    if not available_models_data:
+        # Error is printed by the API client
+        return
+
+    cli_state["available_models"] = available_models_data
+
+    table = Table(title="Available LLM Models", border_style="blue")
+    table.add_column("Choice #", style="dim", justify="center")
+    table.add_column("Provider", style="yellow")
+    table.add_column("Model ID", style="cyan")
+    table.add_column("Model Name", style="white")
+
+    model_choices = []
+    for i, model in enumerate(cli_state["available_models"], 1):
+        model_id = model.get('id', 'N/A')
+        model_choices.append(str(i))
+        table.add_row(
+            str(i),
+            model.get('provider', 'N/A').capitalize(),
+            model_id,
+            model.get('name', 'N/A')
+        )
+    console.print(table)
+
+    try:
+        # Find the current model's index to set as default
+        current_model_index = "1"
+        if cli_state.get("model"):
+            for i, model in enumerate(cli_state["available_models"]):
+                if model['id'] == cli_state["model"]:
+                    current_model_index = str(i + 1)
+                    break
+
+        choice_str = Prompt.ask(
+            "[bold]Select a model number to use[/bold]",
+            choices=model_choices,
+            show_choices=False,
+            default=current_model_index
+        )
+        selected_index = int(choice_str) - 1
+        selected_model = cli_state["available_models"][selected_index]['id']
+
+        cli_state["model"] = selected_model
+        save_config()
+        console.print(f"✅ Model set to [bold green]{cli_state['model']}[/bold green]. This will be saved for future sessions.")
+
+    except (ValueError, IndexError):
+        console.print("[red]❌ Invalid selection.[/red]")
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Model selection cancelled.[/yellow]")
+
+# <--- MODIFIED: This function is completely replaced to be prompt_toolkit compatible ---
+def get_prompt_text() -> List[Tuple[str, str]]:
+    """Builds a prompt_toolkit-compatible formatted text list for the prompt."""
+    provider_name = "No Model Selected"
+    if cli_state.get("model"):
+        provider_name = cli_state["model"].split('/')[0].capitalize()
+
+    return [
+        ('class:lumiere', 'Lumière'),
+        ('class:provider', f' ({provider_name})'),
+        ('class:separator', ' > '),
+    ]
+
+# --- Enhanced Analysis Session Manager ---
+class AnalysisSession:
+    def __init__(self, repo_url: str):
+        self.repo_url = format_url(repo_url)
+        if not validate_github_url(self.repo_url):
+            raise ValueError(f"Invalid GitHub URL: {self.repo_url}")
+
+        self.repo_id = self.repo_url.replace("https://github.com/", "").replace("/", "_")
+        self.issues = []
+        self.api = LumiereAPIClient()
+        cli_state["last_repo_url"] = self.repo_url
+        save_config()
+
+    def start(self) -> bool:
+        """Initialize the analysis session."""
+        console.print(Panel(
+            f"[bold cyan]🔍 Analysis Session Starting[/bold cyan]\n"
+            f"[yellow]Repository:[/yellow] {self.repo_url}\n"
+            f"[yellow]Model:[/yellow] {cli_state['model']}",
+            border_style="cyan"
+        ))
+
+        with Status("[cyan]Checking backend connection...") as status:
+            if not self.api.health_check():
+                return False # Error already printed by client
+            status.update("[green]✓ Backend connection established")
+            time.sleep(0.5)
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            transient=True
+        ) as progress:
+            task = progress.add_task("[green]🤖 Contacting The Strategist...", total=100)
+            strategist_data = self.api.get_analysis(self.repo_url)
+            if not strategist_data:
+                return False
+            progress.update(task, completed=100)
+
+        self.issues = strategist_data.get("prioritized_issues", [])
+        if not self.issues:
+            console.print("[yellow]📭 No open issues found in this repository.[/yellow]")
+            return False
+
+        console.print(f"✨ The Strategist identified [bold green]{len(self.issues)}[/bold green] open issues for analysis.")
+        self.display_issue_table()
+        return True
+
+    def display_issue_table(self):
+        """Display a formatted table of prioritized issues."""
+        table = Table(
+            title="[bold blue]🎯 Prioritized Issue Triage[/bold blue]",
+            show_header=True,
+            header_style="bold magenta",
+            border_style="blue"
+        )
+        table.add_column("Rank", style="dim", justify="center", width=6)
+        table.add_column("Score", style="bold", justify="center", width=8)
+        table.add_column("Issue #", style="green", justify="center", width=10)
+        table.add_column("Title", style="white", no_wrap=False)
+
+        for issue in self.issues:
+            score = issue.get('score', 0)
+            score_style = "red" if score >= 90 else "yellow" if score >= 70 else "white"
+            score_emoji = "🔥" if score >= 90 else "⚡" if score >= 70 else "📝"
+
+            table.add_row(
+                f"#{issue['rank']}",
+                f"{score_emoji} [{score_style}]{score}[/{score_style}]",
+                f"#{issue['number']}",
+                issue['title'][:80] + "..." if len(issue['title']) > 80 else issue['title']
+            )
+        console.print(table)
+
+    def loop(self):
+        """Main interactive loop for the analysis session."""
+        display_interactive_help('analyze')
+
+        global prompt_session
+        prompt_session = PromptSession(
+            history=FileHistory(str(history_path)),
+            completer=analysis_completer,
+            style=prompt_style  # <--- MODIFIED
+        )
+
+        while True:
+            try:
+                prompt_text = get_prompt_text()
+                command_str = prompt_session.prompt(prompt_text).strip()
+
+                if not command_str:
+                    continue
+
+                if command_str.lower() in ("q", "quit", "exit", "back"):
+                    break
+
+                self.handle_analysis_command(command_str)
+
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Use 'exit' or 'back' to return to main menu.[/yellow]")
+                continue
+            except EOFError:
+                break
+
+        console.print("[cyan]📊 Analysis session ended.[/cyan]")
+
+        # Restore main prompt session
+        prompt_session = PromptSession(
+            history=FileHistory(str(history_path)),
+            completer=main_completer,
+            style=prompt_style
+        )
+
+    def handle_analysis_command(self, command_str: str):
+        """Handle commands within the analysis session."""
+        try:
+            parts = shlex.split(command_str.lower())
+        except ValueError:
+            console.print("[red]❌ Invalid command syntax.[/red]")
+            return
+
+        command = parts[0] if parts else ""
+        args = parts[1:] if len(parts) > 1 else []
+
+        if command in ("h", "help"):
+            display_interactive_help('analyze')
+            return
+
+        if command in ("l", "list"):
+            self.display_issue_table()
+            return
+
+        if command not in ('f', 'fix', 'b', 'briefing', 'r', 'rca', 'd', 'details'):
+            console.print("[red]❌ Unknown command. Type 'help' for available commands.[/red]")
+            return
+
+        issue_num_str = None
+        if args and args[0].isdigit():
+            issue_num_str = args[0]
+        else:
+            try:
+                issue_num_str = Prompt.ask(f"Which issue # for '[cyan]{command}[/cyan]'?").strip()
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Command cancelled.[/yellow]")
+                return
+
+        if not issue_num_str or not issue_num_str.isdigit():
+            console.print("[red]❌ Please enter a valid issue number.[/red]")
+            return
+
+        target_issue = next((iss for iss in self.issues if iss.get('number') == int(issue_num_str)), None)
+        if not target_issue:
+            console.print(f"[red]❌ Issue #{issue_num_str} not found in the prioritized list.[/red]")
+            console.print("[dim]💡 Use 'list' to see available issues.[/dim]")
+            return
+
+        self.execute_action(command, target_issue)
+        console.print("\n[dim]💡 Type [bold]list[/bold] to see issues, or [bold]help[/bold] for commands.[/dim]")
+
+    def execute_action(self, command: str, issue: Dict):
+        """Execute the specified action on an issue."""
+        if command in ("f", "fix"):
+            self.handle_fix_dialogue(issue)
+            return
+
+        if command in ("r", "rca"):
+            self.handle_rca_command(issue)
+            return
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            transient=True
+        ) as progress:
+            if command in ("b", "briefing"):
+                task = progress.add_task(f"[cyan]📋 Getting briefing for issue #{issue['number']}...", total=None)
+                briefing_data = self.api.get_briefing(f"{self.repo_url}/issues/{issue['number']}")
+                progress.remove_task(task)
+
+                if briefing_data and briefing_data.get("briefing"):
+                    console.print(Panel(
+                        Markdown(briefing_data["briefing"]),
+                        title=f"[bold blue]📋 Issue Briefing #{issue['number']}[/bold blue]",
+                        border_style="blue"
+                    ))
+                else:
+                    console.print("[red]❌ Could not retrieve briefing.[/red]")
+
+            elif command in ("d", "details"):
+                issue_url = f"{self.repo_url}/issues/{issue['number']}"
+                console.print(Panel(
+                    f"[bold]Issue #{issue['number']}[/bold]\n"
+                    f"[yellow]Title:[/yellow] {issue['title']}\n"
+                    f"[yellow]Priority Score:[/yellow] {issue['score']}/100\n"
+                    f"[yellow]URL:[/yellow] [link={issue_url}]{issue_url}[/link]\n"
+                    f"[yellow]Description:[/yellow] {issue.get('description', 'No description available')[:200]}...",
+                    title="[bold green]📝 Issue Details[/bold green]",
+                    border_style="green"
+                ))
+
+    def handle_rca_command(self, issue: Dict):
+        """Handle root cause analysis command."""
+        console.print(f"[cyan]🔍 Starting Root Cause Analysis for issue #{issue['number']}[/cyan]")
+
+        issue_desc = issue.get('description', '')
+        file_match = re.search(r'in `([\w./\\-]+\.py)`', issue_desc)
+
+        if file_match:
+            target_file = file_match.group(1)
+            console.print(f"[dim]✓ Auto-detected file: [yellow]{target_file}[/yellow][/dim]")
+        else:
+            try:
+                target_file = Prompt.ask("Enter the target file path for analysis")
+                if not target_file.strip():
+                    console.print("[yellow]❌ Root cause analysis cancelled.[/yellow]")
+                    return
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Root cause analysis cancelled.[/yellow]")
+                return
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            transient=True
+        ) as progress:
+            task = progress.add_task("[cyan]🕵️ Performing root cause analysis...", total=None)
+            rca_data = self.api.get_rca(self.repo_url, issue.get('description', ''), target_file)
+            progress.remove_task(task)
+
+        if rca_data and rca_data.get("analysis"):
+            console.print(Panel(
+                Markdown(rca_data["analysis"]),
+                title=f"[bold red]🕵️ Root Cause Analysis - Issue #{issue['number']}[/bold red]",
+                border_style="red"
+            ))
+        else:
+            console.print("[red]❌ Could not perform root cause analysis.[/red]")
+
+    def _display_diff(self, original_code: str, new_code: str):
+        """Display a formatted diff of code changes."""
+        diff = difflib.unified_diff(
+            original_code.splitlines(keepends=True),
+            new_code.splitlines(keepends=True),
+            fromfile='🔴 Original',
+            tofile='🟢 Proposed'
+        )
+
+        diff_panel_content = Text()
+        for line in diff:
+            if line.startswith('+++') or line.startswith('---'):
+                diff_panel_content.append(line, style="bold blue")
+            elif line.startswith('+'):
+                diff_panel_content.append(line, style="green")
+            elif line.startswith('-'):
+                diff_panel_content.append(line, style="red")
+            elif line.startswith('@'):
+                diff_panel_content.append(line, style="bold yellow")
+            else:
+                diff_panel_content.append(line, style="dim")
+
+        console.print(Panel(
+            diff_panel_content,
+            title="[bold yellow]📝 Proposed Code Changes[/bold yellow]",
+            expand=True,
+            border_style="yellow"
+        ))
+
+    def handle_fix_dialogue(self, issue: Dict):
+        """Handle the complete fix dialogue workflow."""
+        console.print(Panel(
+            f"[bold cyan]🤝 Socratic Dialogue[/bold cyan] starting for:\n"
+            f"[bold green]Issue #{issue['number']}: {issue['title']}[/bold green]",
+            border_style="cyan"
+        ))
+
+        issue_desc = issue.get('description', '')
+        issue_title = issue.get('title', '')
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            transient=True
+        ) as progress:
+            task = progress.add_task("[cyan]🕵️ Engaging The Diplomat...", total=None)
+            diplomat_report = self.api.get_diplomat_report(issue_title, issue_desc)
+            progress.remove_task(task)
+
+        if diplomat_report and diplomat_report.get("summary"):
+            console.print(Panel(
+                Markdown(diplomat_report["summary"]),
+                title="[bold blue]🕵️ Diplomat Intelligence Briefing[/bold blue]",
+                border_style="blue"
+            ))
+
+            try:
+                if not Confirm.ask("\n[bold]🚀 Proceed with generating a fix?[/bold]", default=True):
+                    console.print("[yellow]🛑 Operation cancelled.[/yellow]")
+                    return
+            except KeyboardInterrupt:
+                console.print("\n[yellow]🛑 Operation cancelled.[/yellow]")
+                return
+
+        file_match = re.search(r'in `([\w./\\-]+\.py)`', issue_desc)
+        if not file_match:
+            try:
+                target_file = Prompt.ask("Could not auto-detect target file. Please enter the file path")
+                if not target_file.strip():
+                    console.print("[red]❌ Cannot proceed without target file.[/red]")
+                    return
+            except KeyboardInterrupt:
+                console.print("\n[yellow]🛑 Operation cancelled.[/yellow]")
+                return
+        else:
+            target_file = file_match.group(1)
+            console.print(f"[dim]✓ Auto-detected file: [yellow]{target_file}[/yellow][/dim]")
+
+        instruction = f"Fix this bug in '{target_file}': {issue_title}\n\n{issue_desc}"
+        current_code = ""
+        original_code = ""
+        refinement_history = []
+        iteration_count = 0
+        max_iterations = 5
+
+        while iteration_count < max_iterations:
+            iteration_count += 1
+            console.print(f"\n[dim]🔄 Iteration {iteration_count}/{max_iterations}[/dim]")
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                transient=True
+            ) as progress:
+                task = progress.add_task(f"[cyan]⚡ Generating code fix...", total=None)
+                fix_data = self.api.generate_fix(self.repo_id, target_file, instruction, refinement_history)
+                progress.remove_task(task)
+
+            if not fix_data or "generated_code" not in fix_data:
+                console.print("[red]❌ Failed to generate fix.[/red]")
+                return
+
+            current_code = fix_data["generated_code"]
+            if not original_code:
+                original_code = fix_data.get("original_content", "")
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[bold cyan][progress.description]{task.description}"),
+                transient=True
+            ) as progress:
+                task = progress.add_task(f"🔥 Entering The Crucible...", total=None)
+                validation_result = self.api.validate_in_crucible(self.repo_url, target_file, current_code)
+                progress.remove_task(task)
+
+            if not validation_result:
+                console.print(Panel(
+                    "🔥 [bold red]Crucible Service Error[/bold red]\n"
+                    "The validation service is not available.\n"
+                    "[dim]💡 Please check that Docker is running and the service is healthy.[/dim]",
+                    title="[red]🔥 Crucible Report[/red]",
+                    border_style="red"
+                ))
+                crucible_passed = False
+            else:
+                crucible_passed = validation_result.get("status") == "passed"
+                if crucible_passed:
+                    console.print(Panel(
+                        "✅ [bold green]All tests passed![/bold green]\n"
+                        "The proposed changes are validated and ready.",
+                        title="[green]🔥 Crucible Report[/green]",
+                        border_style="green"
+                    ))
+                else:
+                    logs = validation_result.get('logs', 'No logs available')
+                    console.print(Panel(
+                        f"❌ [bold red]Validation Failed[/bold red]\n"
+                        f"[bold]Test Results:[/bold]\n{logs}",
+                        title="[red]🔥 Crucible Report[/red]",
+                        border_style="red"
+                    ))
+
+            console.rule("[bold]📝 Review Proposed Changes[/bold]")
+            self._display_diff(original_code, current_code)
+
+            try:
+                if crucible_passed:
+                    choice = Prompt.ask(
+                        "\n[bold]✅ Tests passed! Choose action:[/bold]\n"
+                        "[bold green](a)[/bold green] Approve & create PR\n"
+                        "[bold yellow](r)[/bold yellow] Refine with feedback\n"
+                        "[bold red](c)[/bold red] Cancel",
+                        choices=['a', 'r', 'c'],
+                        default='a'
+                    ).lower()
+                else:
+                    choice = Prompt.ask(
+                        "\n[bold]❌ Tests failed! Choose action:[/bold]\n"
+                        "[bold yellow](r)[/bold yellow] Refine with feedback\n"
+                        "[bold orange3](a)[/bold orange3] Approve anyway & create PR\n"
+                        "[bold red](c)[/bold red] Cancel",
+                        choices=['a', 'r', 'c'],
+                        default='r'
+                    ).lower()
+            except KeyboardInterrupt:
+                console.print("\n[yellow]🛑 Operation cancelled.[/yellow]")
+                break
+
+            if choice == 'c':
+                console.print("[yellow]🛑 Operation cancelled.[/yellow]")
+                break
+
+            if choice == 'a':
+                if not crucible_passed:
+                    try:
+                        confirmed = Confirm.ask(
+                            "[bold yellow]⚠️  Tests failed. Create PR anyway?[/bold yellow]",
+                            default=False
+                        )
+                        if not confirmed:
+                            console.print("[yellow]🛑 PR creation cancelled.[/yellow]")
+                            continue
+                    except KeyboardInterrupt:
+                        console.print("\n[yellow]🛑 Operation cancelled.[/yellow]")
+                        break
+
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    transient=True
+                ) as progress:
+                    task = progress.add_task("[cyan]🚀 Dispatching Ambassador...", total=None)
+                    pr_data = self.api.create_pr(f"{self.repo_url}/issues/{issue['number']}", target_file, current_code)
+                    progress.remove_task(task)
+
+                if pr_data and pr_data.get("pull_request_url"):
+                    pr_url = pr_data["pull_request_url"]
+                    console.print(Panel(
+                        f"✅ [bold green]Success![/bold green]\n"
+                        f"Pull request created: [link={pr_url}]{pr_url}[/link]\n\n"
+                        f"[dim]🎉 The Ambassador has successfully delivered your fix![/dim]",
+                        title="[green]🚀 Mission Complete[/green]",
+                        border_style="green"
+                    ))
+                else:
+                    console.print("[red]❌ Failed to create pull request.[/red]")
+                break
+
+            if choice == 'r':
+                if iteration_count >= max_iterations:
+                    console.print(f"[yellow]⚠️  Maximum iterations ({max_iterations}) reached.[/yellow]")
+                    break
+
+                try:
+                    feedback = Prompt.ask("\n[bold]💭 Your feedback for improvement[/bold]")
+                    if not feedback.strip():
+                        console.print("[yellow]⚠️  Empty feedback provided, skipping refinement.[/yellow]")
+                        continue
+                    refinement_history.append({
+                        "feedback": feedback,
+                        "code": current_code
+                    })
+                except KeyboardInterrupt:
+                    console.print("\n[yellow]🛑 Refinement cancelled by user.[/yellow]")
+                    break
+
+# --- Utility Function for Help Display ---
+def display_interactive_help(context: str = 'main'):
+    """Display help instructions based on the current CLI context."""
+    title = f"🆘 Lumière Help — {context.capitalize()} Context"
+    help_table = Table(title=f"[bold magenta]{title}[/bold magenta]", border_style="magenta")
+    help_table.add_column("Command", style="bold cyan")
+    help_table.add_column("Description", style="white")
+
+    if context == 'main':
+        help_table.add_row("analyze / a", "Start analysis on a GitHub repo")
+        help_table.add_row("profile / p", "Get GitHub user profile analysis")
+        # --- DYNAMIC HELP TEXT ---
+        if cli_state.get("model"):
+            help_table.add_row("config / c", "Change LLM model or view settings")
+        else:
+            help_table.add_row("config / c", "Choose LLM model and view settings")
+        help_table.add_row("help / h", "Show this help menu")
+        help_table.add_row("exit / quit", "Exit the application")
+    elif context == 'analyze':
+        help_table.add_row("list / l", "Show prioritized issues")
+        help_table.add_row("briefing / b", "Show issue briefing")
+        help_table.add_row("details / d", "Show issue metadata")
+        help_table.add_row("rca / r", "Root cause analysis")
+        help_table.add_row("fix / f", "Launch fix dialogue")
+        help_table.add_row("help / h", "Show this help menu")
+        help_table.add_row("back / exit / quit", "Return to main menu")
+
+    console.print(help_table)
+
+# --- Main Entry Point ---
+app = typer.Typer()
+
+@app.command()
+def run():
+    """Launch Lumière interactive shell."""
+    api_client = LumiereAPIClient()
+    if not api_client.health_check():
+        sys.exit(1) # Error already printed by client
+
+    load_config()
+
+    # --- ENHANCED WELCOME PANEL ---
+    welcome_text = (
+        f"[bold cyan]✨ Welcome to Lumière ✨[/bold cyan]\n"
+        f"AI Dev Assistant for Open Source Projects\n\n"
+        f"[dim]Backend Status: [green]Online[/green] at [underline]{API_BASE_URL}[/underline]\n"
+        f"Date: {datetime.now().strftime('%B %d, %Y %H:%M:%S')}[/dim]"
+    )
+    console.print(Panel(welcome_text, border_style="cyan"))
+
+    display_interactive_help('main')
+
+    while True:
+        try:
+            # --- CORRECTED PROMPT HANDLING ---
+            prompt_text = get_prompt_text()
+            command = prompt_session.prompt(prompt_text).strip()
+
+            if not command:
+                continue
+
+            if command.lower() in ("exit", "quit", "x"):
+                console.print("[dim]👋 Goodbye![/dim]")
+                break
+
+            if command.lower() in ("help", "h"):
+                display_interactive_help('main')
+                continue
+
+            if command.lower() in ("config", "c"):
+                console.print(Panel(
+                    f"[bold]Current Settings[/bold]\n"
+                    f"  [cyan]LLM Model:[/cyan] [yellow]{cli_state.get('model', 'Not set')}[/yellow]\n"
+                    f"  [cyan]Last Repo:[/cyan] {cli_state.get('last_repo_url', 'Not set')}\n"
+                    f"  [cyan]Debug Mode:[/cyan] {'On' if cli_state.get('debug_mode') else 'Off'}",
+                    title="⚙️ Configuration", border_style="magenta"
+                ))
+                handle_model_selection(api_client)
+                continue
+
+            if command.lower() in ("profile", "p"):
+                if not cli_state.get("model"):
+                    console.print("[bold red]Please select a model first using the 'config' command.[/bold red]")
+                    continue
+                username = Prompt.ask("Enter GitHub username")
+                if not username.strip():
+                    continue
+                with Status("[cyan]Generating profile analysis...[/cyan]"):
+                    profile = api_client.get_profile(username)
+                if profile and profile.get("profile_summary"):
+                    console.print(Panel(Markdown(profile["profile_summary"]), title=f"👤 Profile Analysis for {username}"))
+                else:
+                    console.print("[red]❌ Could not retrieve profile.[/red]")
+                continue
+
+            if command.lower() in ("analyze", "a"):
+                if not cli_state.get("model"):
+                    console.print("[bold red]Please select a model first using the 'config' command.[/bold red]")
+                    continue
+                repo_url = Prompt.ask("Enter GitHub repository URL").strip()
+                if not repo_url: # Gracefully handle empty input
+                    continue
+                try:
+                    session = AnalysisSession(repo_url)
+                    if session.start():
+                        session.loop()
+                except ValueError as e:
+                    console.print(f"[red]{e}[/red]")
+                continue
+
+            console.print("[red]❌ Unknown command. Type 'help' for options.[/red]")
+
+        except KeyboardInterrupt:
+            console.print("\n[dim]💤 Interrupted. Type 'exit' to quit.[/dim]")
+            continue
+        except EOFError:
+            break
+
+if __name__ == "__main__":
+    app()
+
+--- FILE_END: lumiere.py ---
 
 
 --- FILE_START: backend/LatchyCat_lumiere-ambassador-test-target_cortex.json ---
 {
   "repo_id": "LatchyCat_lumiere-ambassador-test-target",
-  "last_crawled_utc": "2025-06-21T04:56:49.323946+00:00",
+  "last_crawled_utc": "2025-06-21T17:26:57.813216+00:00",
   "project_health_score": 0.0,
   "project_structure_tree": "...",
   "github_metadata": {},
@@ -401,7 +1278,7 @@ from django.db import models
 
 from django.core.management.base import BaseCommand
 from lumiere_core.services.ollama import search_index
-from lumiere_core.services.llm import generate_text
+from backend.lumiere_core.services.ollama_service import generate_text
 
 class Command(BaseCommand):
     help = 'Generates a "Pre-flight Briefing" for a given query using a RAG pipeline.'
@@ -1088,6 +1965,8 @@ class IntelligentCrawler:
 
 
 --- FILE_START: backend/requirements.txt ---
+# In backend/requirements.txt
+
 # Django Core
 Django
 djangorestframework
@@ -1105,8 +1984,19 @@ beautifulsoup4
 # GitHub API Client
 PyGithub
 
-# --- NEW: For loading .env files ---
+# --- For loading .env files ---
 python-dotenv
+
+# --- NEW: For the Conductor CLI ---
+typer[all]
+rich
+prompt-toolkit
+
+# --- NEW: For The Crucible service ---
+docker
+
+# --- NEW: For Google Gemini API ---
+google-generativeai
 
 --- FILE_END: backend/requirements.txt ---
 
@@ -1536,7 +2426,7 @@ urlpatterns = [
 from typing import Dict
 
 from .ollama import search_index
-from .llm import generate_text
+from .ollama_service import generate_text
 from .utils import clean_llm_code_output
 
 def generate_docstring_for_code(repo_id: str, new_code: str, instruction: str) -> Dict[str, str]:
@@ -1621,7 +2511,7 @@ import subprocess
 from pathlib import Path
 from typing import Dict, Optional, List
 
-from .llm import generate_text
+from .ollama_service import generate_text
 
 # This is a simple in-memory cache for our development server.
 REVIEW_ENVIRONMENTS = {}
@@ -1762,55 +2652,132 @@ def list_active_reviews() -> Dict[str, Dict[str, str]]:
 --- FILE_END: backend/lumiere_core/services/review_service.py ---
 
 
+--- FILE_START: backend/lumiere_core/services/rca_service.py ---
+# In backend/lumiere_core/services/rca_service.py
+import json
+from pathlib import Path
+from typing import Dict, Any
+
+from . import llm_service, github
+from .ollama import search_index
+
+def _get_repo_id_from_url(repo_url: str) -> str:
+    """Helper to derive repo_id from a URL."""
+    return repo_url.replace("https://github.com/", "").replace("/", "_")
+
+def _get_file_content_from_cortex(repo_id: str, file_path: str) -> str | None:
+    """Helper to get file content from the cortex JSON."""
+    cortex_path = Path(f"{repo_id}_cortex.json")
+    if not cortex_path.exists():
+        return None
+    try:
+        with open(cortex_path, 'r', encoding='utf-8') as f:
+            cortex_data = json.load(f)
+        for file_data in cortex_data.get('files', []):
+            if file_data.get('file_path') == file_path:
+                return file_data.get('raw_content')
+    except (json.JSONDecodeError, FileNotFoundError):
+        return None
+    return None
+
+def generate_briefing(issue_url: str, model_identifier: str) -> Dict[str, Any]:
+    """Generates a 'Pre-flight Briefing' for a GitHub issue using RAG."""
+    print(f"Generating briefing for issue: {issue_url}")
+    issue_data = github.scrape_github_issue(issue_url)
+    if not issue_data:
+        return {"error": "Could not retrieve issue details from GitHub."}
+
+    repo_id = _get_repo_id_from_url(issue_data['repo_url'])
+    query = issue_data['full_text_query']
+    index_path = f"{repo_id}_faiss.index"
+    map_path = f"{repo_id}_id_map.json"
+
+    try:
+        context_chunks = search_index(
+            query_text=query, model_name='snowflake-arctic-embed2:latest',
+            index_path=index_path, map_path=map_path, k=7
+        )
+    except FileNotFoundError:
+        return {"error": f"Index files for repo '{repo_id}' not found. Please run the crawler and indexer first."}
+    except Exception as e:
+        return {"error": f"Failed to retrieve context from vector index: {e}"}
+
+    context_string = "\n\n".join([f"--- Context from file '{chunk['file_path']}' ---\n{chunk['text']}" for chunk in context_chunks])
+
+    prompt = f"""
+    You are Lumière Sémantique, an expert AI programming assistant.
+    Your mission is to provide a "Pre-flight Briefing" for a developer about to work on a task.
+    Analyze the user's query and the provided context from the codebase to generate your report.
+
+    The report must be clear, concise, and structured in Markdown. Include:
+    1.  **Task Summary:** Briefly rephrase the user's request.
+    2.  **Core Analysis:** Based on context, explain how the system currently works in relation to the query.
+    3.  **Key Files & Code:** Point out the most important files or functions from the context.
+    4.  **Suggested Approach or Potential Challenges:** Offer a high-level plan or mention potential issues.
+
+    --- PROVIDED CONTEXT FROM THE CODEBASE ---
+    {context_string}
+    --- END OF CONTEXT ---
+
+    USER'S QUERY: "{query}"
+
+    Now, generate the Pre-flight Briefing.
+    """
+    briefing_report = llm_service.generate_text(prompt, model_identifier)
+    return {"briefing": briefing_report}
+
+def perform_rca(repo_url: str, bug_description: str, target_file: str, model_identifier: str) -> Dict[str, Any]:
+    """Performs Root Cause Analysis on a specific file."""
+    print(f"Performing RCA on '{target_file}' for bug: '{bug_description}'")
+    repo_id = _get_repo_id_from_url(repo_url)
+
+    file_content = _get_file_content_from_cortex(repo_id, target_file)
+    if file_content is None:
+        return {"error": f"File '{target_file}' not found in the indexed context for repo '{repo_id}'."}
+
+    index_path = f"{repo_id}_faiss.index"
+    map_path = f"{repo_id}_id_map.json"
+
+    try:
+        context_chunks = search_index(
+            query_text=bug_description, model_name='snowflake-arctic-embed2:latest',
+            index_path=index_path, map_path=map_path, k=5
+        )
+    except Exception as e:
+        print(f"Warning: RAG search failed during RCA: {e}. Proceeding without extra context.")
+        context_chunks = []
+
+    rag_context = "\n\n".join([f"--- Context from file '{chunk['file_path']}' ---\n{chunk['text']}" for chunk in context_chunks])
+
+    prompt = f"""
+    You are a master debugger and senior engineer. Your task is to perform a Root Cause Analysis (RCA).
+
+    **Bug Description:** "{bug_description}"
+    **Target File under Scrutiny:** `{target_file}`
+
+    **Content of `{target_file}`:**
+    ```python
+    {file_content}
+    ```
+
+    **Potentially Related Code from Other Files:**
+    {rag_context}
+
+    **Your Analysis:**
+    Based on all the provided information, analyze the code and explain the likely root cause of the bug.
+    Be specific. Point to exact line numbers or functions if possible. Explain the faulty logic.
+    Structure your analysis in Markdown.
+    """
+    analysis_report = llm_service.generate_text(prompt, model_identifier)
+    return {"analysis": analysis_report}
+
+--- FILE_END: backend/lumiere_core/services/rca_service.py ---
+
+
 --- FILE_START: backend/lumiere_core/services/__init__.py ---
 # In ~/lumiere_semantique/backend/lumiere_core/services/__init__.py
 
 --- FILE_END: backend/lumiere_core/services/__init__.py ---
-
-
---- FILE_START: backend/lumiere_core/services/llm.py ---
-# In lumiere_core/services/llm.py
-
-import ollama
-from typing import Dict
-
-def generate_text(prompt: str, model_name: str = 'qwen3:4b') -> str:
-    """
-    Sends a prompt to a local Ollama model and returns the response.
-
-    Args:
-        prompt: The full prompt to send to the model.
-        model_name: The name of the Ollama model to use for generation.
-
-    Returns:
-        The generated text content from the model.
-    """
-    print(f"Sending prompt to local Ollama model: '{model_name}'...")
-
-    try:
-        # The ollama client automatically connects to http://localhost:11434
-        client = ollama.Client()
-
-        # Use the 'chat' method for conversational models like qwen3
-        response = client.chat(
-            model=model_name,
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ]
-        )
-
-        # Extract the text content from the response object
-        return response['message']['content']
-
-    except Exception as e:
-        # Provide a more specific error message for Ollama
-        return (f"An error occurred while communicating with the Ollama server: {e}\n"
-                f"Please ensure the Ollama server is running and the model '{model_name}' is available.")
-
---- FILE_END: backend/lumiere_core/services/llm.py ---
 
 
 --- FILE_START: backend/lumiere_core/services/ambassador.py ---
@@ -1827,8 +2794,7 @@ from dotenv import load_dotenv
 from github import Github, GithubException
 
 from .github import scrape_github_issue, _parse_github_issue_url
-from .scaffolding import generate_scaffold
-from .llm import generate_text
+from . import llm_service
 from ingestion.crawler import IntelligentCrawler
 
 # --- Configuration ---
@@ -1842,8 +2808,6 @@ if not GITHUB_TOKEN or not GITHUB_USERNAME:
 g = Github(GITHUB_TOKEN)
 user = g.get_user(GITHUB_USERNAME)
 
-
-# --- NEW HELPER FUNCTION ---
 def _sanitize_branch_name(text: str) -> str:
     """Creates a URL- and git-safe branch name from a string."""
     text = text.lower()
@@ -1852,18 +2816,16 @@ def _sanitize_branch_name(text: str) -> str:
     text = text.strip('-')
     return text[:60]
 
-
-# --- The Main Orchestration Function ---
-def dispatch_pr(issue_url: str) -> Dict[str, str]:
+# --- CORRECTED FUNCTION SIGNATURE ---
+def dispatch_pr(issue_url: str, target_file: str, fixed_code: str, model_identifier: str) -> Dict[str, str]:
     """
-    Orchestrates the entire workflow: from issue analysis to pull request creation.
+    Orchestrates the git operations and PR creation using user-approved code.
     """
     print("--- AMBASSADOR AGENT ACTIVATED ---")
     print(f"Target Issue: {issue_url}")
+    print(f"Using model for commit message: {model_identifier}")
 
-    # 1. GATHER INTEL & PLAN
-    # -----------------------
-    print("\n[Step 1/5] Gathering Intel & Forming a Plan...")
+    print("\n[Step 1/4] Gathering Intel...")
     try:
         issue_data = scrape_github_issue(issue_url)
         if not issue_data:
@@ -1873,42 +2835,12 @@ def dispatch_pr(issue_url: str) -> Dict[str, str]:
         if not parsed_url:
             raise ValueError("Could not parse the provided issue URL.")
         owner, repo_name, issue_number = parsed_url
-
         repo_full_name = f"{owner}/{repo_name}"
-        repo_id = repo_full_name.replace("/", "_")
-
-        file_match = re.search(r'in `(\w+\.py)`', issue_data["description"])
-        if not file_match:
-            raise ValueError("Could not determine the target file from the issue description.")
-        target_file = file_match.group(1)
-
-        instruction = f"""
-        Analyze the following GitHub issue and fix the bug described.
-        Issue Title: {issue_data['title']}
-        Issue Body: {issue_data['description']}
-        The bug is located in the file: {target_file}
-        """
-        print(f"✓ Plan established: Fix bug in '{target_file}' based on issue #{issue_number}.")
+        print(f"✓ Intel gathered for issue #{issue_number}.")
     except Exception as e:
-        print(f"Error during Intel Gathering: {e}")
         return {"error": f"Failed during intel gathering: {e}"}
 
-    # 2. GENERATE THE FIX
-    # -------------------
-    print(f"\n[Step 2/5] Generating Code Fix for '{target_file}'...")
-    try:
-        scaffold_result = generate_scaffold(repo_id, target_file, instruction)
-        if "error" in scaffold_result:
-            raise ValueError(f"Scaffolding failed: {scaffold_result['error']}")
-        fixed_code = scaffold_result["generated_code"]
-        print("✓ Code fix generated successfully.")
-    except Exception as e:
-        print(f"Error during Code Generation: {e}")
-        return {"error": f"Failed during code generation: {e}"}
-
-    # 3. PREPARE THE REPOSITORY
-    # -------------------------
-    print("\n[Step 3/5] Preparing Repository...")
+    print("\n[Step 2/4] Preparing Repository...")
     try:
         upstream_repo = g.get_repo(repo_full_name)
         working_repo = None
@@ -1917,33 +2849,36 @@ def dispatch_pr(issue_url: str) -> Dict[str, str]:
             print(f"✓ Target repo is owned by '{GITHUB_USERNAME}'. Skipping fork.")
             working_repo = upstream_repo
         else:
-            print(f"Target repo is owned by '{upstream_repo.owner.login}'. Attempting to find or create fork.")
+            print(f"Target repo owned by '{upstream_repo.owner.login}'. Finding or creating fork.")
             try:
                 working_repo = g.get_repo(f"{GITHUB_USERNAME}/{repo_name}")
                 print(f"✓ Fork '{working_repo.full_name}' already exists.")
             except GithubException:
                 print("Fork not found. Creating fork...")
-                # --- THIS IS THE CORRECTED LINE ---
-                # The 'create_fork()' method is called on the repository you want to fork.
                 working_repo = upstream_repo.create_fork()
                 print(f"✓ Fork created at '{working_repo.full_name}'. Waiting for it to be ready...")
-                time.sleep(10)
+                time.sleep(15)
 
         with IntelligentCrawler(repo_url=working_repo.clone_url) as crawler:
             repo_path = crawler.repo_path
-
             sanitized_title = _sanitize_branch_name(issue_data['title'])
             branch_name = f"lumiere-fix/{issue_number}-{sanitized_title}"
             print(f"✓ Cloned {working_repo.full_name} to '{repo_path}'")
 
-            # 4. APPLY THE FIX
-            # ----------------
-            print(f"\n[Step 4/5] Applying Fix on new branch '{branch_name}'...")
+            print(f"\n[Step 3/4] Applying Fix on new branch '{branch_name}'...")
+            default_branch = upstream_repo.default_branch
+            subprocess.run(['git', 'checkout', default_branch], cwd=repo_path, check=True)
+            subprocess.run(['git', 'pull', 'origin', default_branch], cwd=repo_path, check=True)
             subprocess.run(['git', 'checkout', '-b', branch_name], cwd=repo_path, check=True)
-            (repo_path / target_file).write_text(fixed_code)
-            commit_prompt = f"Based on the issue title '{issue_data['title']}', write a concise, one-line commit message following the Conventional Commits specification (e.g., 'fix: ...')."
-            raw_commit_message = generate_text(commit_prompt, model_name='qwen3:4b')
-            commit_message = re.sub(r'</?think>.*?</think>', '', raw_commit_message, flags=re.DOTALL).strip()
+
+            full_target_path = repo_path / target_file
+            full_target_path.parent.mkdir(parents=True, exist_ok=True)
+            full_target_path.write_text(fixed_code, encoding='utf-8')
+
+            commit_prompt = f"Based on the issue title '{issue_data['title']}', write a concise, one-line commit message following the Conventional Commits specification (e.g., 'fix: ...'). Output ONLY the commit message line."
+
+            # --- CORRECTED LLM CALL ---
+            commit_message = llm_service.generate_text(commit_prompt, model_identifier=model_identifier).strip()
 
             subprocess.run(['git', 'add', target_file], cwd=repo_path, check=True)
             subprocess.run(['git', 'commit', '-m', commit_message], cwd=repo_path, check=True)
@@ -1951,123 +2886,385 @@ def dispatch_pr(issue_url: str) -> Dict[str, str]:
             subprocess.run(['git', 'push', '--set-upstream', 'origin', branch_name], cwd=repo_path, check=True)
             print("✓ Pushed new branch to the working repository.")
 
-            # 5. CREATE PULL REQUEST
-            # ----------------------
-            print("\n[Step 5/5] Creating Pull Request...")
-            pr_title = f"Fix: {issue_data['title']} (Closes #{issue_number})"
+            print("\n[Step 4/4] Creating Pull Request...")
+            pr_title = f"Fix: {issue_data['title']} (Resolves #{issue_number})"
             pr_body = f"""
-This pull request was automatically generated by the Lumière Sémantique 'Ambassador' agent to address Issue #{issue_number}.
-
-### Analysis (Pre-flight Briefing)
-The issue describes a bug in `{target_file}`. The function was incorrectly performing addition instead of subtraction.
-
-### Changes
-- Modified `{target_file}` to correctly implement the subtraction logic.
-- This change is validated by the existing test suite.
-            """
+This pull request was automatically generated and approved by the user via the Lumière Sémantique 'Socratic Dialogue' interface to address Issue #{issue_number}.
+This fix was validated by The Crucible against the project's existing test suite.
+"""
             head_branch = f"{working_repo.owner.login}:{branch_name}"
+            time.sleep(5)
 
-            print("\n--- Pre-PR Sanity Checks ---")
-            print("Waiting 3 seconds for GitHub's systems to sync...")
-            time.sleep(3)
-
-            try:
-                remote_branch = working_repo.get_branch(branch_name)
-                print(f"✓ Branch '{branch_name}' confirmed to exist on {working_repo.full_name} (SHA: {remote_branch.commit.sha})")
-            except GithubException as e:
-                print(f"✗ CRITICAL ERROR: Branch '{branch_name}' not found on {working_repo.full_name} after push. {e}")
-                return {"error": f"Branch not found after push: {e}"}
-
-            print("--- Attempting PR Creation ---")
-            try:
-                pull_request = upstream_repo.create_pull(
-                    title=pr_title,
-                    body=pr_body,
-                    head=head_branch,
-                    base="main"
-                )
-                print(f"✓ Pull Request created successfully: {pull_request.html_url}")
-                print("\n--- AMBASSADOR AGENT MISSION COMPLETE ---")
-                return {"status": "success", "pull_request_url": pull_request.html_url}
-            except GithubException as e:
-                print(f"✗ GitHub API Error during PR Creation: {e}")
-                print(f"  Status: {e.status}")
-                print(f"  Data: {e.data}")
-                raise e
+            pull_request = upstream_repo.create_pull(
+                title=pr_title, body=pr_body, head=head_branch, base=default_branch
+            )
+            print(f"✓ Pull Request created successfully: {pull_request.html_url}")
+            return {"status": "success", "pull_request_url": pull_request.html_url}
 
     except Exception as e:
-        print(f"Error during Git Operations or PR Creation: {e}")
-        if isinstance(e, subprocess.CalledProcessError):
-            print(f"STDERR: {e.stderr}")
-        return {"error": f"Failed during repository operations: {e}"}
+        error_details = str(e)
+        if isinstance(e, subprocess.CalledProcessError): error_details = f"Git Command Failed: {e.stderr}"
+        elif isinstance(e, GithubException): error_details = f"GitHub API Error ({e.status}): {e.data}"
+        print(f"Error during Git Operations or PR Creation: {error_details}")
+        return {"error": f"Failed during repository operations: {error_details}"}
 
 --- FILE_END: backend/lumiere_core/services/ambassador.py ---
 
 
 --- FILE_START: backend/lumiere_core/services/scaffolding.py ---
-# In lumiere_core/services/scaffolding.py
+# In backend/lumiere_core/services/scaffolding.py
+
 import json
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 from .ollama import search_index
-from .llm import generate_text
-# --- NEW: Import the shared cleaning utility ---
+from . import llm_service
 from .utils import clean_llm_code_output
 
 def _get_file_content_from_cortex(repo_id: str, target_file_path: str) -> Optional[str]:
+    """Get file content from the cortex JSON file."""
     cortex_path = Path(f"{repo_id}_cortex.json")
     if not cortex_path.exists():
         print(f"Error: Cortex file not found at {cortex_path}")
         return None
-    with open(cortex_path, 'r', encoding='utf-8') as f:
-        cortex_data = json.load(f)
-    for file_data in cortex_data.get('files', []):
-        if file_data.get('file_path') == target_file_path:
-            return file_data.get('raw_content')
+
+    try:
+        with open(cortex_path, 'r', encoding='utf-8') as f:
+            cortex_data = json.load(f)
+
+        for file_data in cortex_data.get('files', []):
+            if file_data.get('file_path') == target_file_path:
+                return file_data.get('raw_content')
+
+    except (json.JSONDecodeError, FileNotFoundError, UnicodeDecodeError) as e:
+        print(f"Error reading cortex file: {e}")
+        return None
+
     return None
 
-def generate_scaffold(repo_id: str, target_file: str, instruction: str) -> Dict[str, str]:
+def generate_scaffold(
+    repo_id: str,
+    target_file: str,
+    instruction: str,
+    model_identifier: str,
+    refinement_history: Optional[List[Dict[str, str]]] = None
+) -> Dict[str, str]:
     """
-    The core logic for the Code Scaffolding Agent.
+    The core logic for the Code Scaffolding Agent, now with iterative refinement.
     """
     print(f"Initiating Scaffolding Agent for '{target_file}' in repo '{repo_id}'")
+    print(f"Using model: {model_identifier}")
 
+    # Step 1: Retrieve original file content
     print("   -> Step 1: Retrieving original file content...")
     original_content = _get_file_content_from_cortex(repo_id, target_file)
     if original_content is None:
-        return {"error": f"File '{target_file}' not found in the indexed context for repo '{repo_id}'."}
+        return {"error": f"File '{target_file}' not found in the indexed context."}
 
+    # Step 2: Gather additional context with RAG
     print("   -> Step 2: Gathering additional context with RAG...")
-    index_path, map_path = f"{repo_id}_faiss.index", f"{repo_id}_id_map.json"
-    search_query = f"How to implement the following change in the file {target_file}: {instruction}"
-    context_chunks = search_index(query_text=search_query, model_name='snowflake-arctic-embed2:latest', index_path=index_path, map_path=map_path, k=5)
-    rag_context_string = "\n\n".join([f"--- Context from file: {chunk['file_path']} ---\n{chunk['text']}" for chunk in context_chunks])
+    index_path = f"{repo_id}_faiss.index"
+    map_path = f"{repo_id}_id_map.json"
+    search_query = f"How to implement: {instruction}"
 
+    try:
+        context_chunks = search_index(
+            query_text=search_query,
+            model_name='snowflake-arctic-embed2:latest',
+            index_path=index_path,
+            map_path=map_path,
+            k=5
+        )
+        rag_context_string = "\n\n".join([
+            f"--- Context from file: {chunk['file_path']} ---\n{chunk['text']}"
+            for chunk in context_chunks
+        ])
+    except Exception as e:
+        print(f"Warning: Error in RAG search: {e}")
+        rag_context_string = "No additional context available due to search error."
+
+    # Step 3: Build refinement history section
     print("   -> Step 3: Constructing advanced scaffolding prompt...")
-    prompt = f"""You are an expert AI pair programmer...
----
-### USER INSTRUCTION
-{instruction}
----
-### ORIGINAL FILE CONTENT: {target_file}
+    refinement_prompt_section = ""
+    if refinement_history:
+        print("   -> Refinement history detected. Adding to prompt.")
+        refinement_prompt_section = "\n--- PREVIOUS ATTEMPTS AND USER FEEDBACK ---\n"
+        for i, turn in enumerate(refinement_history):
+            refinement_prompt_section += f"### Attempt #{i+1}\n"
+            refinement_prompt_section += f"I generated this code:\n```python\n{turn['code']}\n```\n"
+            refinement_prompt_section += f"The user provided this feedback: '{turn['feedback']}'\n\n"
+        refinement_prompt_section += "Analyze the feedback and generate a new, improved version.\n---\n"
+
+    # Step 4: Construct the prompt
+    prompt = f"""You are an expert AI pair programmer.
+
+### GOAL
+Modify '{target_file}' to accomplish this: "{instruction}"
+
+### ORIGINAL FILE CONTENT
+```python
 {original_content}
----
-### ADDITIONAL RELEVANT CONTEXT
+```
+
+{refinement_prompt_section}
+
+### RELEVANT CONTEXT
 {rag_context_string}
----
-Now, provide the full, modified content for the file '{target_file}'.
-"""
 
-    print(f"   -> Step 4: Sending request to the default code generation model...")
-    raw_generated_code = generate_text(prompt)
+### INSTRUCTIONS
+You MUST provide the ENTIRE, new content for the file '{target_file}'.
+Your response MUST be ONLY raw Python code. Do not add commentary or markdown fences.
 
+Now, generate the full, modified content for '{target_file}'."""
+
+    # Step 5: Generate code with error handling
+    print("   -> Step 4: Sending request to the LLM...")
+    try:
+        raw_generated_code = llm_service.generate_text(prompt, model_identifier=model_identifier)
+        if not raw_generated_code:
+            return {"error": "Failed to generate code - empty response from LLM"}
+    except Exception as e:
+        return {"error": f"Failed to generate code: {str(e)}"}
+
+    # Step 6: Clean and finalize the generated code
     print("   -> Step 5: Cleaning and finalizing the generated code...")
-    final_code = clean_llm_code_output(raw_generated_code)
+    try:
+        final_code = clean_llm_code_output(raw_generated_code)
+    except Exception as e:
+        print(f"Warning: Error cleaning code output: {e}")
+        final_code = raw_generated_code  # Use raw output if cleaning fails
 
-    return {"generated_code": final_code}
+    return {
+        "generated_code": final_code,
+        "original_content": original_content
+    }
 
 --- FILE_END: backend/lumiere_core/services/scaffolding.py ---
+
+
+--- FILE_START: backend/lumiere_core/services/diplomat.py ---
+# In backend/lumiere_core/services/diplomat.py
+
+import os
+import re
+import requests
+from typing import Dict, Any, List
+from github import Github, GithubException, Issue
+
+from . import llm_service
+from .utils import clean_llm_code_output
+
+# --- Configuration ---
+GITHUB_TOKEN = os.getenv("GITHUB_ACCESS_TOKEN")
+if not GITHUB_TOKEN:
+    raise ValueError("GITHUB_ACCESS_TOKEN must be set in the .env file.")
+
+g = Github(GITHUB_TOKEN)
+
+def _get_pr_for_issue(issue: Issue) -> Dict[str, Any] | None:
+    """Finds the Pull Request that closed a given issue."""
+    try:
+        for event in issue.get_timeline():
+            if event.event == "closed" and event.source and event.source.issue:
+                pr = event.source.issue
+                return {
+                    "url": pr.html_url,
+                    "title": pr.title,
+                    "diff_url": pr.diff_url,
+                }
+    except GithubException as e:
+        print(f"   -> API error while fetching timeline for {issue.html_url}: {e}")
+    return None
+
+def find_similar_solved_issues(issue_title: str, issue_body: str, model_identifier: str) -> Dict[str, Any]:
+    """
+    The main logic for The Diplomat agent.
+    Searches GitHub for similar, solved issues and synthesizes the findings.
+    """
+    print("--- DIPLOMAT AGENT ACTIVATED ---")
+    print(f"Using model: {model_identifier}")
+
+    print("\n[Step 1/3] Generating a targeted search query from issue details...")
+    query_generation_prompt = f"""
+You are an expert GitHub search querycrafter. Based on the following issue title and body, generate a concise, powerful search query for finding similar issues.
+Focus on extracting key library names, error messages, and critical function names.
+For example, for a "TypeError" in "requests", the query might be: `requests "TypeError: timeout value must be a float"`.
+
+ISSUE TITLE: {issue_title}
+ISSUE BODY:
+{issue_body}
+
+Now, provide ONLY the search query string. Do not include any of your own commentary or XML tags.
+"""
+    raw_query = llm_service.generate_text(query_generation_prompt, model_identifier)
+    search_query = clean_llm_code_output(raw_query).replace('"', '')
+    print(f"✓ Generated Search Query: '{search_query}'")
+
+    print("\n[Step 2/3] Searching GitHub for similar, solved issues...")
+    qualified_query = f'{search_query} is:issue is:closed stars:>100 in:body'
+
+    try:
+        issues = g.search_issues(query=qualified_query, order="desc")
+        print(f"✓ Found {issues.totalCount} potential matches. Analyzing the top 5...")
+
+        evidence = []
+        for issue in issues[:5]:
+            print(f"   -> Analyzing: {issue.html_url}")
+            closing_pr = _get_pr_for_issue(issue)
+            if closing_pr:
+                evidence.append({
+                    "issue_title": issue.title,
+                    "issue_url": issue.html_url,
+                    "repo_name": issue.repository.full_name,
+                    "solution_url": closing_pr['url'],
+                    "diff_url": closing_pr['diff_url'],
+                })
+
+        if not evidence:
+            return {
+                "summary": "The Diplomat was unable to find relevant, solved issues on GitHub for this specific problem.",
+                "evidence": []
+            }
+
+    except GithubException as e:
+        return {"error": f"An error occurred while searching GitHub: {e.data.get('message', str(e))}"}
+
+    print("\n[Step 3/3] Synthesizing findings into an intelligence briefing...")
+    evidence_str = ""
+    for item in evidence:
+        evidence_str += f"- Issue in **{item['repo_name']}**: \"{item['issue_title']}\"\n"
+        evidence_str += f"  - Issue Link: {item['issue_url']}\n"
+        evidence_str += f"  - Solved by PR: {item['solution_url']}\n"
+
+    synthesis_prompt = f"""
+You are "The Diplomat," an AI agent for Lumière Sémantique.
+You have found several solved issues on GitHub that are similar to the user's current problem.
+Your mission is to write a concise intelligence briefing summarizing your findings. Do NOT tell the user how to fix their code. Instead, highlight the PATTERNS you found in the solutions.
+
+Example summary format:
+"This appears to be a known configuration issue. I found similar reports in `psf/requests` and `org/project` that were solved by changing a specific parameter. This strengthens the case for a configuration-based fix."
+
+Here is the evidence you collected:
+{evidence_str}
+
+Now, generate the "Diplomat Intelligence Briefing" in Markdown.
+"""
+    summary = llm_service.generate_text(synthesis_prompt, model_identifier)
+
+    print("--- DIPLOMAT AGENT MISSION COMPLETE ---")
+    return {"summary": summary, "evidence": evidence}
+
+--- FILE_END: backend/lumiere_core/services/diplomat.py ---
+
+
+--- FILE_START: backend/lumiere_core/services/llm_service.py ---
+# In backend/lumire_core/services/llm_service.py
+
+from typing import List, Dict, Any
+
+from . import ollama_service
+from . import gemini_service
+
+# --- Public API for the LLM Service ---
+
+def generate_text(prompt: str, model_identifier: str) -> str:
+    """
+    Generates text using the specified model provider.
+    This is the single entry point for all other services.
+
+    Args:
+        prompt: The text prompt for the model.
+        model_identifier: A string like "provider/model-name"
+                          (e.g., "ollama/qwen3:4b" or "gemini/gemini-1.5-pro-latest").
+
+    Returns:
+        The generated text from the model.
+    """
+    parts = model_identifier.split('/', 1)
+    if len(parts) != 2:
+        return f"Error: Invalid model identifier format '{model_identifier}'. Expected 'provider/model-name'."
+
+    provider, model_name = parts
+
+    if provider == "ollama":
+        return ollama_service.generate_text(prompt, model_name)
+    elif provider == "gemini":
+        return gemini_service.generate_text(prompt, model_name)
+    else:
+        return f"Error: Unknown LLM provider '{provider}'."
+
+
+def list_available_models() -> List[Dict[str, Any]]:
+    """
+    Aggregates available models from all configured providers.
+    """
+    all_models = []
+    all_models.extend(ollama_service.list_models())
+    all_models.extend(gemini_service.list_models())
+    return all_models
+
+--- FILE_END: backend/lumiere_core/services/llm_service.py ---
+
+
+--- FILE_START: backend/lumiere_core/services/gemini_service.py ---
+# In backend/lumiere_core/services/gemini_service.py
+
+import os
+import google.generativeai as genai
+from typing import List, Dict
+
+# Configure the Gemini client from environment variables
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
+def is_configured() -> bool:
+    """Check if the Gemini service is ready to be used."""
+    return GEMINI_API_KEY is not None
+
+def generate_text(prompt: str, model_name: str) -> str:
+    """
+    Sends a prompt to the Google Gemini API.
+
+    Args:
+        prompt: The full prompt to send.
+        model_name: The specific Gemini model to use (e.g., 'gemini-1.5-pro-latest').
+    """
+    if not is_configured():
+        return "Error: GEMINI_API_KEY is not configured in the environment."
+
+    print(f"Sending prompt to Google Gemini model: '{model_name}'...")
+    try:
+        model = genai.GenerativeModel(model_name)
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        print(f"An error occurred while communicating with the Gemini API: {e}")
+        return f"Error from Gemini API: {e}"
+
+def list_models() -> List[Dict[str, str]]:
+    """Lists available Gemini models that support text generation."""
+    if not is_configured():
+        return []
+
+    print("Fetching available Google Gemini models...")
+    available = []
+    try:
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                model_id = f"gemini/{m.name.replace('models/', '')}"
+                available.append({
+                    "id": model_id,
+                    "provider": "gemini",
+                    "name": m.display_name
+                })
+        return available
+    except Exception as e:
+        print(f"Could not fetch Gemini models: {e}")
+        return []
+
+--- FILE_END: backend/lumiere_core/services/gemini_service.py ---
 
 
 --- FILE_START: backend/lumiere_core/services/utils.py ---
@@ -2094,30 +3291,204 @@ def clean_llm_code_output(raw_code: str) -> str:
 --- FILE_END: backend/lumiere_core/services/utils.py ---
 
 
+--- FILE_START: backend/lumiere_core/services/ollama_service.py ---
+# In lumiere_core/services/ollama_service.py
+
+import ollama
+from typing import Dict, List
+
+def generate_text(prompt: str, model_name: str = 'qwen3:4b') -> str:
+    """
+    Sends a prompt to a local Ollama model and returns the response.
+
+    Args:
+        prompt: The full prompt to send to the model.
+        model_name: The name of the Ollama model to use for generation.
+
+    Returns:
+        The generated text content from the model.
+    """
+    print(f"Sending prompt to local Ollama model: '{model_name}'...")
+    try:
+        client = ollama.Client()
+        response = client.chat(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response['message']['content']
+    except Exception as e:
+        return (f"An error occurred while communicating with the Ollama server: {e}\n"
+                f"Please ensure the Ollama server is running and the model '{model_name}' is available.")
+
+def list_models() -> List[Dict[str, str]]:
+    """
+    Fetches the list of locally available Ollama models.
+    """
+    print("Fetching available local Ollama models...")
+    try:
+        client = ollama.Client()
+        response = client.list()
+
+        available = []
+        for model_data in response.get('models', []):
+            model_id = f"ollama/{model_data['name']}"
+            available.append({
+                "id": model_id,
+                "provider": "ollama",
+                "name": model_data['name']
+            })
+        return available
+    except Exception as e:
+        print(f"Could not fetch Ollama models. Is the Ollama server running? Error: {e}")
+        return []
+
+--- FILE_END: backend/lumiere_core/services/ollama_service.py ---
+
+
+--- FILE_START: backend/lumiere_core/services/crucible.py ---
+# In backend/lumiere_core/services/crucible.py
+
+import os
+import uuid
+from pathlib import Path
+from typing import Dict, Tuple, Optional
+
+import docker
+from docker.errors import BuildError, ContainerError, APIError, DockerException
+
+from .utils import clean_llm_code_output
+from ingestion.crawler import IntelligentCrawler
+
+# --- Environment Detection Helpers ---
+def _detect_dependencies(repo_path: Path) -> Tuple[str, str]:
+    print("   -> Detecting dependency file...")
+    if (repo_path / "requirements.txt").exists():
+        print("      - Found requirements.txt")
+        return "pip install -r requirements.txt", "requirements.txt"
+    if (repo_path / "pyproject.toml").exists():
+        print("      - Found pyproject.toml (assuming standard PEP 517 build)")
+        return "pip install .", "pyproject.toml"
+    print("      - No dependency file found. Assuming no special dependencies.")
+    return "echo 'No dependencies to install'", ""
+
+def _detect_test_runner(repo_path: Path) -> str:
+    print("   -> Detecting test runner...")
+    if (repo_path / "pytest.ini").exists() or (repo_path / "tox.ini").exists():
+        print("      - Found pytest.ini or tox.ini. Using 'pytest'.")
+        return "pytest"
+    if (repo_path / "tests").is_dir() or (repo_path / "test").is_dir():
+        print("      - Found 'tests' directory. Assuming 'pytest'.")
+        return "pytest"
+    print("      - No specific test runner found. Falling back to 'python -m unittest discover'.")
+    return "python -m unittest discover"
+
+def _generate_dockerfile(install_command: str, dependency_file_path: str, test_command: str) -> str:
+    print("   -> Generating dynamic Dockerfile...")
+    dockerfile_content = f"""
+FROM python:3.10-slim
+WORKDIR /app
+COPY . /app
+"""
+    if dependency_file_path:
+        dockerfile_content += f"RUN {install_command}\n"
+    dockerfile_content += f"CMD {test_command}\n"
+    print("      - Dockerfile generated successfully.")
+    return dockerfile_content
+
+# --- Main Service Orchestrator ---
+def validate_fix(repo_url: str, target_file: str, modified_code: str) -> Dict[str, str]:
+    """
+    The main logic for The Crucible agent.
+    """
+    print("\n--- CRUCIBLE AGENT ACTIVATED ---")
+    print(f"Validating fix for '{target_file}' in '{repo_url}'")
+
+    # ** THE FIX **: Add a top-level try/except to catch the Docker connection error.
+    try:
+        client = docker.from_env()
+        # Ping the docker daemon to ensure it's running before we do anything else
+        client.ping()
+        print("✓ Successfully connected to Docker daemon.")
+    except DockerException:
+        error_msg = "Crucible Error: Could not connect to the Docker daemon. Please ensure Docker Desktop is running."
+        print(f"✗ {error_msg}")
+        return {"status": "error", "logs": error_msg}
+
+    with IntelligentCrawler(repo_url=repo_url) as crawler:
+        repo_path = crawler.repo_path
+        print("[Step 1/5] Patching file in local clone...")
+        full_target_path = repo_path / target_file
+        if not full_target_path.exists():
+            return {"status": "error", "logs": f"Crucible Error: Target file '{target_file}' not found."}
+        full_target_path.write_text(modified_code, encoding='utf-8')
+        print("✓ File patched.")
+
+        print("[Step 2/5] Analyzing project environment...")
+        install_cmd, dep_file = _detect_dependencies(repo_path)
+        test_cmd = _detect_test_runner(repo_path)
+        dockerfile_str = _generate_dockerfile(install_cmd, dep_file, test_cmd)
+        (repo_path / "Dockerfile.lumiere").write_text(dockerfile_str, encoding='utf-8')
+        print("✓ Environment analysis complete.")
+
+        print("[Step 3/5] Building validation image...")
+        image_tag = f"lumiere-crucible/{uuid.uuid4()}"
+        image = None
+        try:
+            image, build_logs = client.images.build(path=str(repo_path), dockerfile="Dockerfile.lumiere", tag=image_tag, rm=True, forcerm=True)
+            print(f"✓ Image '{image_tag}' built.")
+        except BuildError as e:
+            print(f"✗ Build Failed: {e}")
+            logs = "\n".join([log.get('stream', '').strip() for log in e.build_log])
+            return {"status": "failed", "logs": f"Docker image build failed:\n{logs}"}
+
+        try:
+            print(f"[Step 4/5] Running tests in container from image '{image_tag}'...")
+            container_output = client.containers.run(image_tag, remove=True)
+            print("✓ Tests PASSED.")
+            return {"status": "passed", "logs": container_output.decode('utf-8')}
+        except ContainerError as e:
+            print(f"✗ Tests FAILED. Exit code: {e.exit_status}")
+            logs = e.stderr.decode('utf-8') if e.stderr else e.stdout.decode('utf-8')
+            return {"status": "failed", "logs": logs}
+        finally:
+            print("[Step 5/5] Cleaning up validation image...")
+            if image:
+                try: client.images.remove(image.id, force=True); print(f"✓ Image '{image_tag}' removed.")
+                except APIError as e: print(f"Warning: Could not remove image '{image_tag}'. Error: {e}")
+
+    print("--- CRUCIBLE AGENT MISSION COMPLETE ---")
+    return {"status": "error", "logs": "Crucible process completed without a definitive pass/fail result."}
+
+--- FILE_END: backend/lumiere_core/services/crucible.py ---
+
+
 --- FILE_START: backend/lumiere_core/services/strategist.py ---
 # In backend/lumiere_core/services/strategist.py
 
 import json
-import re  # <--- THE MISSING IMPORT
+import re
 from typing import Dict, List, Any
 
 from . import github
-from . import ambassador
-from .llm import generate_text
+# The import for 'ambassador' is no longer needed as auto-dispatch is removed.
+# from . import ambassador
+# --- CORRECTED IMPORT: Only import the master llm_service ---
+from . import llm_service
 
-def analyze_and_prioritize(repo_url: str, auto_dispatch_config: dict) -> Dict[str, Any]:
+# --- CORRECTED FUNCTION SIGNATURE: Added model_identifier ---
+def analyze_and_prioritize(repo_url: str, model_identifier: str) -> Dict[str, Any]:
     """
     The core logic for The Strategist agent.
-    Fetches all open issues, uses an LLM to prioritize them, and optionally
-    dispatches the Ambassador agent to fix the top-priority issues.
+    Fetches all open issues and uses a specified LLM to prioritize them.
+    NOTE: Auto-dispatch has been removed to align with the interactive Socratic/Crucible workflow.
     """
     print("--- STRATEGIST AGENT ACTIVATED ---")
     print(f"Analyzing repository: {repo_url}")
+    print(f"Using model: {model_identifier}")
 
-    # Step 1 & 2: Fetch and Enrich All Open Issues
+    # Step 1: Fetch and Enrich All Open Issues
     print("\n[Step 1/3] Fetching and enriching all open issues...")
 
-    # A more robust way to get the repo_full_name from any valid repo URL
     match = re.search(r"github\.com/([^/]+)/([^/]+)", repo_url)
     if not match:
         return {"error": f"Could not parse repository name from URL: {repo_url}"}
@@ -2133,15 +3504,14 @@ def analyze_and_prioritize(repo_url: str, auto_dispatch_config: dict) -> Dict[st
         issue_details = github.scrape_github_issue(issue_stub['url'])
         if issue_details:
             enriched_issue_data = {**issue_stub, **issue_details}
-            # The 'labels' are part of the raw issue data from list_open_issues, let's ensure they are added.
-            # Correction: get_issues() provides label objects, not simple strings. We need to extract their names.
-            # For now, this part of the enrichment logic can be improved later.
             enriched_issues.append(enriched_issue_data)
-            issues_for_prompt += f"### Issue #{issue_stub['number']}: {issue_stub['title']}\n{issue_details['description']}\n\n---\n\n"
+            # Ensure description is not None before concatenation
+            description = issue_details.get('description') or ""
+            issues_for_prompt += f"### Issue #{issue_stub['number']}: {issue_stub['title']}\n{description}\n\n---\n\n"
 
     print(f"✓ Found and enriched {len(enriched_issues)} open issues.")
 
-    # Step 3: Use LLM to score and justify prioritization
+    # Step 2: Use LLM to score and justify prioritization
     print("\n[Step 2/3] Submitting issues to LLM for prioritization analysis...")
 
     prompt = f"""You are "The Strategist", an expert engineering manager for the Lumière Sémantique project. Your mission is to analyze a list of open GitHub issues and prioritize them.
@@ -2157,23 +3527,23 @@ SCORING CRITERIA:
 - **Medium (40-69):** Minor bugs, UI/UX issues, dependency updates.
 - **Low (0-39):** Feature requests, documentation, questions, refactoring.
 
-Analyze the following issues and provide ONLY the JSON array as your response.
+Analyze the following issues and provide ONLY the JSON array as your response. Do not include any other text or XML tags like <think>.
 
 --- START OF ISSUES ---
 {issues_for_prompt}
 --- END OF ISSUES ---
 """
 
-    llm_response_str = generate_text(prompt, model_name='qwen3:4b')
+    # --- CORRECTED LLM CALL: Use the llm_service and pass the identifier ---
+    llm_response_str = llm_service.generate_text(prompt, model_identifier=model_identifier)
 
     try:
-        # Clean the response to ensure it's a valid JSON array
-        json_str_match = re.search(r'\[.*\]', llm_response_str, re.DOTALL)
+        cleaned_str = re.sub(r'<think>.*?</think>', '', llm_response_str, flags=re.DOTALL)
+        json_str_match = re.search(r'\[.*\]', cleaned_str, re.DOTALL)
         if not json_str_match:
-            raise json.JSONDecodeError("No JSON array found in LLM response", ll_response_str, 0)
+            raise json.JSONDecodeError("No JSON array found in the LLM's cleaned response.", llm_response_str, 0)
 
         prioritization_data = json.loads(json_str_match.group(0))
-
         priority_map = {item['issue_number']: item for item in prioritization_data}
 
     except (json.JSONDecodeError, KeyError) as e:
@@ -2182,44 +3552,19 @@ Analyze the following issues and provide ONLY the JSON array as your response.
 
     print("✓ LLM analysis complete.")
 
-    # Step 4 & 5: Merge data, sort, and auto-dispatch
-    print("\n[Step 3/3] Finalizing report and handling auto-dispatch...")
+    # Step 3: Merge data and sort
+    print("\n[Step 3/3] Finalizing report...")
 
     final_ranked_list = []
     for issue in enriched_issues:
         issue_number = issue['number']
         if issue_number in priority_map:
             issue.update(priority_map[issue_number])
-            issue['dispatch_status'] = 'manual_review_required'
             final_ranked_list.append(issue)
 
     final_ranked_list.sort(key=lambda x: x.get('score', 0), reverse=True)
 
-    dispatches_made = 0
-    if auto_dispatch_config.get("enabled", False):
-        print(f"Auto-dispatch is ENABLED. Looking for issues with labels: {auto_dispatch_config.get('dispatch_labels', [])}")
-        for issue in final_ranked_list:
-            if dispatches_made >= auto_dispatch_config.get("max_dispatches", 0):
-                break
-
-            # This logic will be improved later when we properly fetch labels
-            issue_labels = [label for label in auto_dispatch_config.get('dispatch_labels', []) if label.lower() in issue['title'].lower()]
-
-            if issue_labels:
-                print(f"Found matching issue #{issue['number']} for auto-dispatch. Dispatching Ambassador...")
-                dispatch_result = ambassador.dispatch_pr(issue['url'])
-
-                if 'error' not in dispatch_result:
-                    issue['dispatch_status'] = 'dispatched'
-                    issue['pr_url'] = dispatch_result.get('pull_request_url')
-                    dispatches_made += 1
-                else:
-                    issue['dispatch_status'] = 'dispatch_failed'
-                    issue['error_message'] = dispatch_result.get('error')
-
-    summary = f"Analyzed {len(final_ranked_list)} open issues. "
-    if dispatches_made > 0:
-        summary += f"Automatically dispatched Ambassador for {dispatches_made} issue(s)."
+    summary = f"Analyzed {len(final_ranked_list)} open issues using the '{model_identifier}' model."
 
     for i, issue in enumerate(final_ranked_list):
         issue['rank'] = i + 1
@@ -2300,27 +3645,51 @@ def get_user_comment_threads(username: str) -> List[Dict[str, Any]]:
     try:
         user = g.get_user(username)
         events = user.get_events()
-        comment_events_checked = 0
-        max_comments_to_check = 5
-        for event in events:
-            if comment_events_checked >= max_comments_to_check: break
+        # Increase check limit to ensure we find comment events
+        max_events_to_check = 50
+        comment_events_found = 0
+        max_comments_to_process = 5
+
+        for i, event in enumerate(events):
+            if i >= max_events_to_check or comment_events_found >= max_comments_to_process:
+                break
+
             if event.type in ['IssueCommentEvent', 'PullRequestReviewCommentEvent']:
-                comment_events_checked += 1
-                payload, comment_data, issue_data = event.payload, payload.get('comment'), payload.get('issue', payload.get('pull_request'))
-                if not comment_data or not issue_data: continue
-                if comment_data['user']['login'] != username: continue
+                payload = event.payload
+                comment_data = payload.get('comment')
+                issue_data = payload.get('issue', payload.get('pull_request'))
+
+                if not comment_data or not issue_data or comment_data['user']['login'] != username:
+                    continue
+
+                comment_events_found += 1
                 repo_name, issue_number = event.repo.name, issue_data['number']
-                created_at_dt = datetime.fromisoformat(comment_data['created_at'].replace('Z', '+00:00'))
-                issue = g.get_repo(repo_name).get_issue(number=issue_number)
-                user_comment = {"id": comment_data['id'], "body": comment_data['body'], "html_url": comment_data['html_url']}
-                replies = []
-                for reply_comment in issue.get_comments(since=created_at_dt):
-                    if reply_comment.user.login != username and reply_comment.id != user_comment['id']:
-                        replies.append({"user": reply_comment.user.login, "body": reply_comment.body, "html_url": reply_comment.html_url})
-                threads.append({
-                    "repo_name": repo_name, "issue_number": issue_number, "issue_title": issue_data['title'],
-                    "issue_url": issue_data['html_url'], "user_comment": user_comment, "replies": replies
-                })
+
+                try:
+                    repo_obj = g.get_repo(repo_name)
+                    issue_obj = repo_obj.get_issue(number=issue_number)
+
+                    created_at_str = comment_data.get('created_at')
+                    if not created_at_str: continue
+
+                    # Correctly parse the ISO 8601 string into a timezone-aware datetime object
+                    created_at_dt = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+
+                    user_comment = {"id": comment_data['id'], "body": comment_data['body'], "html_url": comment_data['html_url']}
+
+                    replies = []
+                    # Fetch comments created *after* the user's comment
+                    for reply_comment in issue_obj.get_comments(since=created_at_dt):
+                        if reply_comment.user.login != username and reply_comment.id != user_comment['id']:
+                            replies.append({"user": reply_comment.user.login, "body": reply_comment.body, "html_url": reply_comment.html_url})
+
+                    threads.append({
+                        "repo_name": repo_name, "issue_number": issue_number, "issue_title": issue_data['title'],
+                        "issue_url": issue_data['html_url'], "user_comment": user_comment, "replies": replies
+                    })
+                except GithubException as ge:
+                    print(f"Warning: Could not fully process event for {repo_name}#{issue_number}. Skipping. Reason: {ge}")
+                    continue
         return threads
     except GithubException as e:
         print(f"GitHub API Error while fetching comment threads: {e}")
@@ -2387,7 +3756,7 @@ import os
 import logging
 
 from .ollama import search_index
-from .llm import generate_text
+from .ollama_service import generate_text
 # --- NEW: Import the shared cleaning utility ---
 from .utils import clean_llm_code_output
 
@@ -2593,7 +3962,7 @@ def generate_test_suggestions(code_snippet: str) -> List[str]:
 # In backend/lumiere_core/services/profile_service.py
 from typing import Dict, Any
 from . import github
-from .llm import generate_text
+from . import llm_service
 
 def _format_data_for_llm(profile_data: Dict[str, Any]) -> str:
     """Formats the aggregated GitHub data into a text block for the LLM."""
@@ -2623,7 +3992,7 @@ Public Repos: {user.get('public_repos', 0)}
         text += "No starred repositories found.\n"
 
     text += "\n---"
-    text += "\n## Recent Issue/PR Comments & Replies by {user['login']}\n"
+    text += f"\n## Recent Issue/PR Comments & Replies by {user['login']}\n"
     if profile_data['comment_threads']:
         for thread in profile_data['comment_threads']:
             text += f"\nOn repo `{thread['repo_name']}` (Issue/PR #{thread['issue_number']}):\n"
@@ -2638,12 +4007,13 @@ Public Repos: {user.get('public_repos', 0)}
 
     return text
 
-def generate_profile_review(username: str) -> Dict[str, Any]:
+def generate_profile_review(username: str, model_identifier: str) -> Dict[str, Any]:
     """
     The core logic for the Chronicler Agent.
     Fetches a user's GitHub activity and generates a narrative summary.
     """
     print(f"Initiating Chronicler Agent for user '{username}'")
+    print(f"Using model: {model_identifier}")
 
     print("   -> Step 1: Fetching profile data from GitHub API...")
     user_profile = github.get_user_profile(username)
@@ -2662,7 +4032,6 @@ def generate_profile_review(username: str) -> Dict[str, Any]:
     print("   -> Step 2: Formatting data and constructing FINAL prompt for LLM...")
     context_string = _format_data_for_llm(raw_data)
 
-    # --- FINAL, MOST DIRECT PROMPT ---
     prompt = f"""You are an expert GitHub profile analyst. Your task is to analyze the user '{username}' based ONLY on the provided data.
 
 **CRITICAL INSTRUCTION: Your entire analysis MUST be about the user '{username}'. Do NOT summarize the technical problems in the comments. Instead, use the comments to understand the USER'S BEHAVIOR.**
@@ -2690,7 +4059,7 @@ Now, generate the Developer Profile Briefing about the user '{username}'.
 """
 
     print("   -> Step 3: Sending request to LLM for narrative generation...")
-    summary = generate_text(prompt, model_name='qwen3:4b')
+    summary = llm_service.generate_text(prompt, model_identifier=model_identifier)
 
     final_response = { "profile_summary": summary, "raw_data": raw_data }
 
@@ -2825,7 +4194,8 @@ python manage.py runserver 8002
 
 
 --- FILE_START: backend/.env ---
-ANTHROPIC_API_KEY="sk-ant-your-api-key-here"
+
+GEMINI_API_KEY='AIzaSyAVvfR4hTMO15HP0Skk0y3A3Bmsvg9ivmI'
 
 --- FILE_END: backend/.env ---
 
@@ -2876,24 +4246,36 @@ from django.test import TestCase
 
 
 --- FILE_START: backend/api/urls.py ---
-# In api/urls.py
+# In backend/api/urls.py
+
 from django.urls import path
 from .views import (
     BriefingView, ScaffoldView, TestGenerationView, RcaView,
     DocstringGenerationView, PrepareReviewView, ExecuteReviewView,
     ProfileReviewView, AmbassadorDispatchView, IssueListView,
+    StrategistPrioritizeView, FileContentView, DiplomatView,
+    CrucibleValidateView, ListModelsView,
     # --- NEW IMPORT ---
-    StrategistPrioritizeView,
+    HealthCheckView,
 )
 
 urlpatterns = [
+    # --- NEW HEALTH CHECK ENDPOINT ---
+    path('health/', HealthCheckView.as_view(), name='health_check'),
+
+    # --- MODEL MANAGEMENT ENDPOINT ---
+    path('models/list/', ListModelsView.as_view(), name='list_models'),
+
     # --- "Triage & Strategy" ENDPOINTS ---
     path('issues/list/', IssueListView.as_view(), name='list_issues'),
     path('strategist/prioritize/', StrategistPrioritizeView.as_view(), name='strategist_prioritize'),
+    path('diplomat/find-similar-issues/', DiplomatView.as_view(), name='diplomat_find_similar'),
 
-    # --- "Execution" ENDPOINTS ---
+    # --- "Execution & Validation" ENDPOINTS ---
     path('briefing/', BriefingView.as_view(), name='briefing'),
     path('scaffold/', ScaffoldView.as_view(), name='scaffold'),
+    path('crucible/validate/', CrucibleValidateView.as_view(), name='crucible_validate'),
+    path('file-content/', FileContentView.as_view(), name='file_content'),
     path('generate-tests/', TestGenerationView.as_view(), name='generate_tests'),
     path('generate-docstring/', DocstringGenerationView.as_view(), name='generate_docstring'),
     path('rca/', RcaView.as_view(), name='rca'),
@@ -2909,236 +4291,263 @@ urlpatterns = [
 
 
 --- FILE_START: backend/api/views.py ---
-# In api/views.py
+# In backend/api/views.py
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 import os
-import json
-import traceback
 import re
+import traceback
 
-from lumiere_core.services.ollama import search_index
-from lumiere_core.services.llm import generate_text
-from lumiere_core.services.github import scrape_github_issue, list_open_issues
-from lumiere_core.services.scaffolding import generate_scaffold
-from lumiere_core.services.testing import generate_tests_for_code
-from lumiere_core.services.documentation import generate_docstring_for_code
-from ingestion.crawler import IntelligentCrawler
-from lumiere_core.services import review_service
-from lumiere_core.services import profile_service
-from lumiere_core.services import ambassador
-from lumiere_core.services import strategist
+# --- Correctly import services from lumiere_core ---
+from lumiere_core.services import (
+    llm_service, github, ambassador, crucible, diplomat,
+    documentation, profile_service, rca_service, scaffolding, strategist,
+    testing, review_service # Added testing and review_service
+)
 
-STOP_WORDS = {
-    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'for', 'if', 'in', 'into', 'is', 'it', 'its', 'no', 'not', 'of', 'on', 'or', 'such', 'that', 'the', 'their', 'then', 'there', 'these', 'they', 'this', 'to', 'was', 'will', 'with', 'i', 'im', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 'yours', 'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', 'her', 'herself', 'it', 'itself', 'they', 'them', 'their', 'theirs', 'themselves', 'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', 'shouldn', 'now', 'd', 'll', 'm', 'o', 're', 've', 'y', 'ain', 'aren', 'couldn', 'didn', 'doesn', 'hadn', 'hasn', 'haven', 'isn', 'ma', 'mightn', 'mustn', 'needn', 'shan', 'shouldn', 'wasn', 'weren', 'won', 'wouldn', 'hi', 'everyone'
-}
+# A sensible default model, preferably a fast one.
+# It will be used if the client doesn't specify a model.
+DEFAULT_MODEL = "ollama/qwen3:4b"
 
-def _filter_blame_by_keywords(blame_output: str, keywords: set) -> str:
-    if not keywords: return ""
-    filtered_lines = [line for line in blame_output.splitlines() if any(keyword.lower() in line.lower() for keyword in keywords)]
-    return "\n".join(filtered_lines)
+# --- NEW VIEW: Health Check ---
+class HealthCheckView(APIView):
+    """A simple view to confirm the server is running."""
+    def get(self, request, *args, **kwargs):
+        return Response({"status": "ok"}, status=status.HTTP_200_OK)
+
+class ListModelsView(APIView):
+    """Returns a list of all available LLM models from configured providers."""
+    def get(self, request, *args, **kwargs):
+        try:
+            models = llm_service.list_available_models()
+            return Response(models, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": "Failed to list models.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class StrategistPrioritizeView(APIView):
+    def post(self, request, *args, **kwargs):
+        repo_url = request.data.get('repo_url')
+        model = request.data.get('model', DEFAULT_MODEL)
+        if not repo_url:
+            return Response({"error": "'repo_url' is required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            result = strategist.analyze_and_prioritize(repo_url, model_identifier=model)
+            if "error" in result:
+                return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(result, status=status.HTTP_200_OK)
+        except Exception as e:
+            traceback.print_exc()
+            return Response({"error": "An internal server error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class DiplomatView(APIView):
+    def post(self, request, *args, **kwargs):
+        issue_title = request.data.get('issue_title')
+        issue_body = request.data.get('issue_body')
+        model = request.data.get('model', DEFAULT_MODEL)
+        if not all([issue_title, issue_body]):
+            return Response({"error": "'issue_title' and 'issue_body' are required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            result = diplomat.find_similar_solved_issues(issue_title, issue_body, model_identifier=model)
+            if "error" in result:
+                return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(result, status=status.HTTP_200_OK)
+        except Exception as e:
+            traceback.print_exc()
+            return Response({"error": "An internal server error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class BriefingView(APIView):
     def post(self, request, *args, **kwargs):
         issue_url = request.data.get('issue_url')
-        if not issue_url: return Response({"error": "A 'issue_url' field is required."}, status=status.HTTP_400_BAD_REQUEST)
+        model = request.data.get('model', DEFAULT_MODEL)
+        if not issue_url:
+            return Response({"error": "'issue_url' is required."}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            issue_data = scrape_github_issue(issue_url)
-            if not issue_data: return Response({"error": "Failed to fetch data from the GitHub API."}, status=status.HTTP_400_BAD_REQUEST)
-            repo_url, rag_query, repo_id = issue_data['repo_url'], issue_data['full_text_query'], issue_data['repo_url'].replace("https://github.com/", "").replace("/", "_")
-            index_path, map_path = f"{repo_id}_faiss.index", f"{repo_id}_id_map.json"
-            if not os.path.exists(index_path): return Response({"error": f"The repository '{repo_id}' has not been indexed yet."}, status=status.HTTP_404_NOT_FOUND)
-            raw_keywords = set(re.findall(r'\b([A-Z][a-zA-Z0-9_]+|[a-z_]{3,})\b', rag_query))
-            keywords = {kw for kw in raw_keywords if kw.lower() not in STOP_WORDS}
-            initial_chunks = search_index(query_text=rag_query, model_name='snowflake-arctic-embed2:latest', index_path=index_path, map_path=map_path, k=15)
-            ranked_chunks = sorted([{"chunk": chunk, "score": sum(len(kw) for kw in keywords if kw.lower() in chunk['text'].lower())} for chunk in initial_chunks], key=lambda x: x['score'], reverse=True)
-            context_string = "\n\n".join([f"--- Context from file: {item['chunk']['file_path']} ---\n{item['chunk']['text']}" for item in ranked_chunks[:7]])
-            briefing_prompt = f"You are an expert Principal Engineer... GITHUB ISSUE\n{rag_query}\n---\nRELEVANT CONTEXT\n{context_string}\n---"
-            final_report = generate_text(briefing_prompt, model_name='qwen3:4b')
-            return Response({"briefing": final_report}, status=status.HTTP_200_OK)
-        except Exception as e:
-            traceback.print_exc()
-            return Response({"error": "An internal server error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-class ScaffoldView(APIView):
-    def post(self, request, *args, **kwargs):
-        repo_id, target_file, instruction = request.data.get('repo_id'), request.data.get('target_file'), request.data.get('instruction')
-        if not all([repo_id, target_file, instruction]): return Response({"error": "The 'repo_id', 'target_file', and 'instruction' fields are required."}, status=status.HTTP_400_BAD_REQUEST)
-        index_path, cortex_path = f"{repo_id}_faiss.index", f"{repo_id}_cortex.json"
-        if not os.path.exists(index_path) or not os.path.exists(cortex_path): return Response({"error": f"Index and/or Cortex file for '{repo_id}' not found."}, status=status.HTTP_404_NOT_FOUND)
-        try:
-            result = generate_scaffold(repo_id=repo_id, target_file=target_file, instruction=instruction)
-            if "error" in result: return Response(result, status=status.HTTP_404_NOT_FOUND)
+            result = rca_service.generate_briefing(issue_url, model_identifier=model)
+            if "error" in result:
+                return Response(result, status=status.HTTP_400_BAD_REQUEST)
             return Response(result, status=status.HTTP_200_OK)
         except Exception as e:
             traceback.print_exc()
             return Response({"error": "An internal server error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-class TestGenerationView(APIView):
-    def post(self, request, *args, **kwargs):
-        repo_id, instruction, new_code = request.data.get('repo_id'), request.data.get('instruction'), request.data.get('new_code')
-        if not all([repo_id, instruction, new_code]):
-            return Response({"error": "'repo_id', 'instruction', and 'new_code' are required."}, status=status.HTTP_400_BAD_REQUEST)
-        index_path = f"{repo_id}_faiss.index"
-        if not os.path.exists(index_path):
-            return Response({"error": f"Index for '{repo_id}' not found. Please ingest the repository first."}, status=status.HTTP_404_NOT_FOUND)
-        try:
-            result = generate_tests_for_code(repo_id=repo_id, new_code=new_code, instruction=instruction)
-            if "error" in result: return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            return Response(result, status=status.HTTP_200_OK)
-        except Exception as e:
-            print(f"An unexpected error occurred in TestGenerationView: {e}"); traceback.print_exc()
-            return Response({"error": "Internal server error.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class RcaView(APIView):
     def post(self, request, *args, **kwargs):
-        repo_url, bug_description, target_file = request.data.get('repo_url'), request.data.get('bug_description'), request.data.get('target_file')
+        repo_url = request.data.get('repo_url')
+        bug_description = request.data.get('bug_description')
+        target_file = request.data.get('target_file')
+        model = request.data.get('model', DEFAULT_MODEL)
         if not all([repo_url, bug_description, target_file]):
             return Response({"error": "'repo_url', 'bug_description', 'target_file' are required."}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            with IntelligentCrawler(repo_url=repo_url) as crawler:
-                resolved_target_path = crawler.find_file_path(target_file)
-                if isinstance(resolved_target_path, dict): return Response(resolved_target_path, status=status.HTTP_409_CONFLICT)
-                if not resolved_target_path: return Response({"error": f"Lumière Sémantique could not find '{target_file}'."}, status=status.HTTP_404_NOT_FOUND)
-                blame_output = crawler.get_blame_for_file(resolved_target_path)
-                if "Error from" in blame_output: return Response({"error": blame_output}, status=status.HTTP_400_BAD_REQUEST)
-                raw_keywords = set(re.findall(r'`([^`]+)`|\b([a-zA-Z]{3,})\b', bug_description))
-                keywords = {item.lower() for tpl in raw_keywords for item in tpl if item and item.lower() not in STOP_WORDS}
-                filtered_blame = _filter_blame_by_keywords(blame_output, keywords)
-                if not filtered_blame:
-                    return Response({"rca_report": "### Root Cause Analysis\n\nNo relevant lines could be found in the git blame history for the keywords in the bug description. Unable to perform analysis."}, status=status.HTTP_200_OK)
-                prompt = f"""You are a software detective...
-### BUG DESCRIPTION
-{bug_description}
----
-### PRE-FILTERED BLAME LOG for {resolved_target_path}
-This log only contains lines that include the keywords: {', '.join(keywords)}
-{filtered_blame}
----
-Now, generate the Root Cause Analysis report.
-"""
-                raw_report = generate_text(prompt, model_name='qwen3:4b')
-                final_report = raw_report.split("</think>", 1)[-1].strip()
-                return Response({"rca_report": final_report}, status=status.HTTP_200_OK)
-        except Exception as e:
-            print(f"An unexpected error occurred in RcaView: {e}"); traceback.print_exc()
-            return Response({"error": "An internal server error.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-class DocstringGenerationView(APIView):
-    def post(self, request, *args, **kwargs):
-        repo_id, instruction, new_code = request.data.get('repo_id'), request.data.get('instruction'), request.data.get('new_code')
-        if not all([repo_id, instruction, new_code]):
-            return Response({"error": "'repo_id', 'instruction', and 'new_code' are required."}, status=status.HTTP_400_BAD_REQUEST)
-        index_path = f"{repo_id}_faiss.index"
-        if not os.path.exists(index_path):
-            return Response({"error": f"Index for '{repo_id}' not found. Please ingest the repository first."}, status=status.HTTP_404_NOT_FOUND)
-        try:
-            result = generate_docstring_for_code(repo_id=repo_id, new_code=new_code, instruction=instruction)
-            if "error" in result: return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            print("✓ Docstring generation complete. Sending response to client.")
+            result = rca_service.perform_rca(repo_url, bug_description, target_file, model_identifier=model)
+            if "error" in result:
+                return Response(result, status=status.HTTP_400_BAD_REQUEST)
             return Response(result, status=status.HTTP_200_OK)
         except Exception as e:
-            print(f"An unexpected error occurred in DocstringGenerationView: {e}"); traceback.print_exc()
-            return Response({"error": "Internal server error.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-class PrepareReviewView(APIView):
-    def post(self, request, *args, **kwargs):
-        repo_url = request.data.get('repo_url')
-        branch_name = request.data.get('branch_name')
-        if not all([repo_url, branch_name]):
-            return Response({"error": "'repo_url' and 'branch_name' are required."}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            result = review_service.prepare_review_environment(repo_url, branch_name)
-            return Response(result, status=status.HTTP_201_CREATED)
-        except Exception as e:
-            return Response({"error": "Failed to prepare review environment.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-class ExecuteReviewView(APIView):
-    def post(self, request, *args, **kwargs):
-        review_id = request.data.get('review_id')
-        if not review_id:
-            return Response({"error": "'review_id' is required."}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            diff_text = review_service.get_diff_for_review(review_id)
-            result = review_service.review_code_diff(diff_text)
-            return Response(result, status=status.HTTP_200_OK)
-        except FileNotFoundError as e:
-            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            print(f"An unexpected error occurred in ExecuteReviewView: {e}"); traceback.print_exc()
-            return Response({"error": "Internal server error during review execution.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        finally:
-            if review_id:
-                review_service.cleanup_review_environment(review_id)
-
-class ProfileReviewView(APIView):
-    def post(self, request, *args, **kwargs):
-        username = request.data.get('username')
-        if not username:
-            return Response({"error": "A 'username' field is required."}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            result = profile_service.generate_profile_review(username)
-            return Response(result, status=status.HTTP_200_OK)
-        except FileNotFoundError as e:
-            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            print(f"An unexpected error occurred in ProfileReviewView: {e}")
             traceback.print_exc()
             return Response({"error": "An internal server error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ScaffoldView(APIView):
+    def post(self, request, *args, **kwargs):
+        repo_id = request.data.get('repo_id')
+        target_file = request.data.get('target_file')
+        instruction = request.data.get('instruction')
+        model = request.data.get('model', DEFAULT_MODEL)
+        refinement_history = request.data.get('refinement_history')
+        if not all([repo_id, target_file, instruction]):
+            return Response({"error": "'repo_id', 'target_file', 'instruction' are required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            result = scaffolding.generate_scaffold(repo_id, target_file, instruction, model, refinement_history)
+            if "error" in result:
+                return Response(result, status=status.HTTP_404_NOT_FOUND)
+            return Response(result, status=status.HTTP_200_OK)
+        except Exception as e:
+            traceback.print_exc()
+            return Response({"error": "An internal server error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class CrucibleValidateView(APIView):
+    def post(self, request, *args, **kwargs):
+        repo_url = request.data.get('repo_url')
+        target_file = request.data.get('target_file')
+        modified_code = request.data.get('modified_code')
+        if not all([repo_url, target_file, modified_code]):
+            return Response({"error": "'repo_url', 'target_file', 'modified_code' are required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            result = crucible.validate_fix(repo_url, target_file, modified_code)
+            return Response(result, status=status.HTTP_200_OK)
+        except Exception as e:
+            traceback.print_exc()
+            error_details = traceback.format_exc()
+            return Response({"error": "An unexpected internal server error occurred in The Crucible.", "details": str(e), "traceback": error_details}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class AmbassadorDispatchView(APIView):
     def post(self, request, *args, **kwargs):
         issue_url = request.data.get('issue_url')
-        if not issue_url:
-            return Response({"error": "A 'issue_url' field is required."}, status=status.HTTP_400_BAD_REQUEST)
+        target_file = request.data.get('target_file')
+        fixed_code = request.data.get('fixed_code')
+        model = request.data.get('model', DEFAULT_MODEL)
+        if not all([issue_url, target_file, fixed_code]):
+            return Response({"error": "'issue_url', 'target_file', 'fixed_code' are required."}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            result = ambassador.dispatch_pr(issue_url)
+            result = ambassador.dispatch_pr(issue_url, target_file, fixed_code, model)
             if "error" in result:
                 return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             return Response(result, status=status.HTTP_201_CREATED)
         except Exception as e:
-            print(f"An unexpected error occurred in AmbassadorDispatchView: {e}")
             traceback.print_exc()
             return Response({"error": "An internal server error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ProfileReviewView(APIView):
+    def post(self, request, *args, **kwargs):
+        username = request.data.get('username')
+        model = request.data.get('model', DEFAULT_MODEL)
+        if not username:
+            return Response({"error": "'username' is required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            result = profile_service.generate_profile_review(username, model_identifier=model)
+            if "error" in result:
+                return Response(result, status=status.HTTP_404_NOT_FOUND)
+            return Response(result, status=status.HTTP_200_OK)
+        except Exception as e:
+            traceback.print_exc()
+            return Response({"error": "An internal server error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class IssueListView(APIView):
     def get(self, request, *args, **kwargs):
         repo_url = request.query_params.get('repo_url')
         if not repo_url:
-            return Response({"error": "A 'repo_url' query parameter is required."}, status=status.HTTP_400_BAD_REQUEST)
-
+            return Response({"error": "'repo_url' query parameter is required."}, status=status.HTTP_400_BAD_REQUEST)
         match = re.search(r"github\.com/([^/]+)/([^/]+)", repo_url)
         if not match:
-            return Response({"error": "Invalid 'repo_url' format. Should be like https://github.com/owner/repo"}, status=status.HTTP_400_BAD_REQUEST)
-
+            return Response({"error": "Invalid 'repo_url' format."}, status=status.HTTP_400_BAD_REQUEST)
         repo_full_name = f"{match.group(1)}/{match.group(2)}"
-
         try:
-            issues = list_open_issues(repo_full_name)
+            issues = github.list_open_issues(repo_full_name)
             return Response(issues, status=status.HTTP_200_OK)
         except Exception as e:
             traceback.print_exc()
-            return Response({"error": "An internal server error occurred while fetching issues.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"error": "An internal server error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-class StrategistPrioritizeView(APIView):
+
+class FileContentView(APIView):
     def post(self, request, *args, **kwargs):
-        repo_url = request.data.get('repo_url')
-        if not repo_url:
-            return Response({"error": "A 'repo_url' field is required."}, status=status.HTTP_400_BAD_REQUEST)
+        repo_id = request.data.get('repo_id')
+        file_path = request.data.get('file_path')
+        if not all([repo_id, file_path]):
+            return Response({"error": "'repo_id' and 'file_path' are required."}, status=status.HTTP_400_BAD_REQUEST)
+        content = scaffolding._get_file_content_from_cortex(repo_id, file_path)
+        if content is None:
+            return Response({"error": f"File '{file_path}' not found for repo '{repo_id}'."}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"content": content}, status=status.HTTP_200_OK)
 
-        auto_dispatch_config = request.data.get('auto_dispatch_config', {"enabled": False})
+# --- NEWLY ADDED VIEWS TO FIX IMPORT ERRORS ---
 
+class TestGenerationView(APIView):
+    def post(self, request, *args, **kwargs):
+        repo_id = request.data.get('repo_id')
+        new_code = request.data.get('new_code')
+        instruction = request.data.get('instruction')
+        if not all([repo_id, new_code, instruction]):
+            return Response({"error": "'repo_id', 'new_code', and 'instruction' are required."}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            result = strategist.analyze_and_prioritize(repo_url, auto_dispatch_config)
-            if "error" in result:
-                return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+            result = testing.generate_tests_for_code(repo_id, new_code, instruction)
             return Response(result, status=status.HTTP_200_OK)
         except Exception as e:
-            print(f"An unexpected error occurred in StrategistPrioritizeView: {e}")
             traceback.print_exc()
             return Response({"error": "An internal server error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class DocstringGenerationView(APIView):
+    def post(self, request, *args, **kwargs):
+        repo_id = request.data.get('repo_id')
+        new_code = request.data.get('new_code')
+        instruction = request.data.get('instruction')
+        if not all([repo_id, new_code, instruction]):
+            return Response({"error": "'repo_id', 'new_code', and 'instruction' are required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            result = documentation.generate_docstring_for_code(repo_id, new_code, instruction)
+            return Response(result, status=status.HTTP_200_OK)
+        except Exception as e:
+            traceback.print_exc()
+            return Response({"error": "An internal server error occurred.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class PrepareReviewView(APIView):
+    def post(self, request, *args, **kwargs):
+        repo_url = request.data.get('repo_url')
+        ref_name = request.data.get('ref_name') # e.g., a branch or tag name
+        if not all([repo_url, ref_name]):
+            return Response({"error": "'repo_url' and 'ref_name' are required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            result = review_service.prepare_review_environment(repo_url, ref_name)
+            return Response(result, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            traceback.print_exc()
+            return Response({"error": "Failed to prepare review environment.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class ExecuteReviewView(APIView):
+    def post(self, request, *args, **kwargs):
+        review_id = request.data.get('review_id')
+        model = request.data.get('model', DEFAULT_MODEL)
+        if not review_id:
+            return Response({"error": "'review_id' is required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            diff_text = review_service.get_diff_for_review(review_id)
+            result = review_service.review_code_diff(diff_text) # Assumes review_code_diff uses default model
+            review_service.cleanup_review_environment(review_id)
+            return Response(result, status=status.HTTP_200_OK)
+        except Exception as e:
+            traceback.print_exc()
+            return Response({"error": "Failed to execute review.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 --- FILE_END: backend/api/views.py ---
 

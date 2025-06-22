@@ -2,7 +2,7 @@
 
 from django.core.management.base import BaseCommand
 from lumiere_core.services.ollama import search_index
-from lumiere_core.services.llm import generate_text
+from backend.lumiere_core.services.ollama_service import generate_text
 
 class Command(BaseCommand):
     help = 'Generates a "Pre-flight Briefing" for a given query using a RAG pipeline.'

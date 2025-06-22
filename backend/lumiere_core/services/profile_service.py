@@ -1,7 +1,7 @@
 # In backend/lumiere_core/services/profile_service.py
 from typing import Dict, Any
 from . import github
-from .llm import generate_text
+from . import llm_service
 
 def _format_data_for_llm(profile_data: Dict[str, Any]) -> str:
     """Formats the aggregated GitHub data into a text block for the LLM."""
@@ -31,7 +31,7 @@ Public Repos: {user.get('public_repos', 0)}
         text += "No starred repositories found.\n"
 
     text += "\n---"
-    text += "\n## Recent Issue/PR Comments & Replies by {user['login']}\n"
+    text += f"\n## Recent Issue/PR Comments & Replies by {user['login']}\n"
     if profile_data['comment_threads']:
         for thread in profile_data['comment_threads']:
             text += f"\nOn repo `{thread['repo_name']}` (Issue/PR #{thread['issue_number']}):\n"
@@ -46,12 +46,13 @@ Public Repos: {user.get('public_repos', 0)}
 
     return text
 
-def generate_profile_review(username: str) -> Dict[str, Any]:
+def generate_profile_review(username: str, model_identifier: str) -> Dict[str, Any]:
     """
     The core logic for the Chronicler Agent.
     Fetches a user's GitHub activity and generates a narrative summary.
     """
     print(f"Initiating Chronicler Agent for user '{username}'")
+    print(f"Using model: {model_identifier}")
 
     print("   -> Step 1: Fetching profile data from GitHub API...")
     user_profile = github.get_user_profile(username)
@@ -70,7 +71,6 @@ def generate_profile_review(username: str) -> Dict[str, Any]:
     print("   -> Step 2: Formatting data and constructing FINAL prompt for LLM...")
     context_string = _format_data_for_llm(raw_data)
 
-    # --- FINAL, MOST DIRECT PROMPT ---
     prompt = f"""You are an expert GitHub profile analyst. Your task is to analyze the user '{username}' based ONLY on the provided data.
 
 **CRITICAL INSTRUCTION: Your entire analysis MUST be about the user '{username}'. Do NOT summarize the technical problems in the comments. Instead, use the comments to understand the USER'S BEHAVIOR.**
@@ -98,7 +98,7 @@ Now, generate the Developer Profile Briefing about the user '{username}'.
 """
 
     print("   -> Step 3: Sending request to LLM for narrative generation...")
-    summary = generate_text(prompt, model_name='qwen3:4b')
+    summary = llm_service.generate_text(prompt, model_identifier=model_identifier)
 
     final_response = { "profile_summary": summary, "raw_data": raw_data }
 

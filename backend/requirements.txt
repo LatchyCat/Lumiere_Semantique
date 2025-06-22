@@ -1,3 +1,5 @@
+# In backend/requirements.txt
+
 # Django Core
 Django
 djangorestframework
@@ -15,5 +17,16 @@ beautifulsoup4
 # GitHub API Client
 PyGithub
 
-# --- NEW: For loading .env files ---
+# --- For loading .env files ---
 python-dotenv
+
+# --- NEW: For the Conductor CLI ---
+typer[all]
+rich
+prompt-toolkit
+
+# --- NEW: For The Crucible service ---
+docker
+
+# --- NEW: For Google Gemini API ---
+google-generativeai

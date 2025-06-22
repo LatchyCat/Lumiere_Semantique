@@ -2,7 +2,7 @@
 from typing import Dict
 
 from .ollama import search_index
-from .llm import generate_text
+from .ollama_service import generate_text
 from .utils import clean_llm_code_output
 
 def generate_docstring_for_code(repo_id: str, new_code: str, instruction: str) -> Dict[str, str]:

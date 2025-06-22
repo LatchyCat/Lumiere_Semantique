@@ -5,7 +5,7 @@ import os
 import logging
 
 from .ollama import search_index
-from .llm import generate_text
+from .ollama_service import generate_text
 # --- NEW: Import the shared cleaning utility ---
 from .utils import clean_llm_code_output
 

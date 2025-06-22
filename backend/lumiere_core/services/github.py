@@ -64,27 +64,51 @@ def get_user_comment_threads(username: str) -> List[Dict[str, Any]]:
     try:
         user = g.get_user(username)
         events = user.get_events()
-        comment_events_checked = 0
-        max_comments_to_check = 5
-        for event in events:
-            if comment_events_checked >= max_comments_to_check: break
+        # Increase check limit to ensure we find comment events
+        max_events_to_check = 50
+        comment_events_found = 0
+        max_comments_to_process = 5
+
+        for i, event in enumerate(events):
+            if i >= max_events_to_check or comment_events_found >= max_comments_to_process:
+                break
+
             if event.type in ['IssueCommentEvent', 'PullRequestReviewCommentEvent']:
-                comment_events_checked += 1
-                payload, comment_data, issue_data = event.payload, payload.get('comment'), payload.get('issue', payload.get('pull_request'))
-                if not comment_data or not issue_data: continue
-                if comment_data['user']['login'] != username: continue
+                payload = event.payload
+                comment_data = payload.get('comment')
+                issue_data = payload.get('issue', payload.get('pull_request'))
+
+                if not comment_data or not issue_data or comment_data['user']['login'] != username:
+                    continue
+
+                comment_events_found += 1
                 repo_name, issue_number = event.repo.name, issue_data['number']
-                created_at_dt = datetime.fromisoformat(comment_data['created_at'].replace('Z', '+00:00'))
-                issue = g.get_repo(repo_name).get_issue(number=issue_number)
-                user_comment = {"id": comment_data['id'], "body": comment_data['body'], "html_url": comment_data['html_url']}
-                replies = []
-                for reply_comment in issue.get_comments(since=created_at_dt):
-                    if reply_comment.user.login != username and reply_comment.id != user_comment['id']:
-                        replies.append({"user": reply_comment.user.login, "body": reply_comment.body, "html_url": reply_comment.html_url})
-                threads.append({
-                    "repo_name": repo_name, "issue_number": issue_number, "issue_title": issue_data['title'],
-                    "issue_url": issue_data['html_url'], "user_comment": user_comment, "replies": replies
-                })
+
+                try:
+                    repo_obj = g.get_repo(repo_name)
+                    issue_obj = repo_obj.get_issue(number=issue_number)
+
+                    created_at_str = comment_data.get('created_at')
+                    if not created_at_str: continue
+
+                    # Correctly parse the ISO 8601 string into a timezone-aware datetime object
+                    created_at_dt = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+
+                    user_comment = {"id": comment_data['id'], "body": comment_data['body'], "html_url": comment_data['html_url']}
+
+                    replies = []
+                    # Fetch comments created *after* the user's comment
+                    for reply_comment in issue_obj.get_comments(since=created_at_dt):
+                        if reply_comment.user.login != username and reply_comment.id != user_comment['id']:
+                            replies.append({"user": reply_comment.user.login, "body": reply_comment.body, "html_url": reply_comment.html_url})
+
+                    threads.append({
+                        "repo_name": repo_name, "issue_number": issue_number, "issue_title": issue_data['title'],
+                        "issue_url": issue_data['html_url'], "user_comment": user_comment, "replies": replies
+                    })
+                except GithubException as ge:
+                    print(f"Warning: Could not fully process event for {repo_name}#{issue_number}. Skipping. Reason: {ge}")
+                    continue
         return threads
     except GithubException as e:
         print(f"GitHub API Error while fetching comment threads: {e}")

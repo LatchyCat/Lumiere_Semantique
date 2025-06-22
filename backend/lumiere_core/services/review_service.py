@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import Dict, Optional, List
 
-from .llm import generate_text
+from .ollama_service import generate_text
 
 # This is a simple in-memory cache for our development server.
 REVIEW_ENVIRONMENTS = {}
