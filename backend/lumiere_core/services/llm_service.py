@@ -1,4 +1,4 @@
-# In backend/lumire_core/services/llm_service.py
+# In backend/lumiere_core/services/llm_service.py
 
 from typing import List, Dict, Any
 
@@ -34,11 +34,14 @@ def generate_text(prompt: str, model_identifier: str) -> str:
         return f"Error: Unknown LLM provider '{provider}'."
 
 
+# === THIS IS THE FUNCTION TO MODIFY ===
 def list_available_models() -> List[Dict[str, Any]]:
     """
     Aggregates available models from all configured providers.
     """
     all_models = []
+    # This will gracefully return [] if the Ollama server is down.
     all_models.extend(ollama_service.list_models())
+    # This will now work because the .env is loaded, returning Gemini models.
     all_models.extend(gemini_service.list_models())
     return all_models
