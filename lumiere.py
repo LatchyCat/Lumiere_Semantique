@@ -8,7 +8,7 @@ import shlex
 import difflib
 import traceback
 from typing import Optional, List, Dict, Tuple
-from collections import defaultdict  # <--- ADDED: For easier grouping of models
+from collections import defaultdict
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -28,6 +28,8 @@ from pathlib import Path
 import json
 import time
 from datetime import datetime
+import textwrap
+from rich.tree import Tree
 
 # --- Global Objects & Configuration ---
 console = Console()
@@ -40,7 +42,7 @@ API_BASE_URL = "http://127.0.0.1:8002/api/v1"
 
 # Create command completers for better UX
 main_commands = ['analyze', 'a', 'profile', 'p', 'config', 'c', 'help', 'h', 'exit', 'x', 'quit']
-analysis_commands = ['list', 'l', 'fix', 'f', 'briefing', 'b', 'rca', 'r', 'details', 'd', 'help', 'h', 'back', 'exit', 'quit']
+analysis_commands = ['list', 'l', 'fix', 'f', 'briefing', 'b', 'rca', 'r', 'details', 'd', 'graph', 'g', 'help', 'h', 'back', 'exit', 'quit']
 
 main_completer = WordCompleter(main_commands, ignore_case=True)
 analysis_completer = WordCompleter(analysis_commands, ignore_case=True)
@@ -104,6 +106,22 @@ def format_url(url: str) -> str:
             url = 'https://github.com/' + url
     return url
 
+def _insert_docstring_into_code(code: str, docstring: str) -> str:
+    """Intelligently inserts a docstring into a Python code snippet."""
+    # Find the first function or class definition
+    match = re.search(r"^(?P<indent>\s*)(def|class)\s+\w+", code, re.MULTILINE)
+    if not match:
+        return code # Cannot find where to insert, return original
+
+    indentation = match.group('indent')
+    insertion_point = match.end()
+
+    # Prepare the docstring with the correct indentation
+    indented_docstring = textwrap.indent(f'"""{docstring}"""', indentation + '    ')
+
+    # Insert the docstring
+    return f"{code[:insertion_point]}\n{indented_docstring}{code[insertion_point:]}"
+
 # --- Enhanced API Client ---
 class LumiereAPIClient:
     def __init__(self, base_url: str = API_BASE_URL, timeout: int = 600):
@@ -151,23 +169,37 @@ class LumiereAPIClient:
 
         except requests.exceptions.HTTPError as e:
             try:
+                # Check for a JSON response, which might contain detailed error info from our backend
                 error_json = e.response.json()
-                error_details = error_json.get('details', str(error_json))
-                if "traceback" in error_json and cli_state["debug_mode"]:
-                    console.print(Panel(error_json['traceback'], title="[bold red]Server Traceback[/bold red]", border_style="red"))
+                error_details = error_json.get('error', str(error_json))
+
                 console.print(Panel(
                     f"[bold red]API Request Failed[/bold red]\n"
                     f"[yellow]URL:[/yellow] {e.request.url}\n"
                     f"[yellow]Status:[/yellow] {e.response.status_code}\n"
                     f"[yellow]Error:[/yellow] {error_details}",
-                    title="[red]API Error[/red]"
+                    title="[red]API Error[/red]",
+                    border_style="red"
                 ))
-            except:
+
+                # If the backend included the raw LLM response for debugging, display it
+                llm_response_for_debug = error_json.get('llm_response')
+                if llm_response_for_debug:
+                    console.print(Panel(
+                        Text(llm_response_for_debug, overflow="fold"),
+                        title="[bold yellow]🔍 LLM Raw Response (for debugging)[/bold yellow]",
+                        border_style="yellow",
+                        expand=False
+                    ))
+
+            except json.JSONDecodeError:
+                # The error response wasn't JSON, so we just display the raw text
                 console.print(Panel(
                     f"[bold red]HTTP Error {e.response.status_code}[/bold red]\n"
-                    f"[yellow]URL:[/yellow] {e.request.url}\n"
-                    f"[yellow]Response:[/yellow] {e.response.text[:200]}...",
-                    title="[red]API Error[/red]"
+                    f"[yellow]URL:[/yellow] {e.request.url}\n\n"
+                    f"[bold]Response Text:[/bold]\n{e.response.text[:500]}...",
+                    title="[red]Non-JSON API Error[/red]",
+                    border_style="red"
                 ))
             return None
 
@@ -199,13 +231,35 @@ class LumiereAPIClient:
     def list_models(self): return self._request("GET", "models/list/")
     def get_analysis(self, repo_url: str): return self._request("POST", "strategist/prioritize/", json={"repo_url": repo_url})
     def get_briefing(self, issue_url: str): return self._request("POST", "briefing/", json={"issue_url": issue_url})
-    def get_rca(self, repo_url: str, bug_description: str, target_file: str): return self._request("POST", "rca/", json={"repo_url": repo_url, "bug_description": bug_description, "target_file": target_file})
+    def get_rca(self, repo_url: str, bug_description: str): return self._request("POST", "rca/", json={"repo_url": repo_url, "bug_description": bug_description})
     def get_profile(self, username: str): return self._request("POST", "profile/review/", json={"username": username})
-    def generate_fix(self, repo_id: str, target_file: str, instruction: str, refinement_history: Optional[List[Dict]] = None): return self._request("POST", "scaffold/", json={"repo_id": repo_id, "target_file": target_file, "instruction": instruction, "refinement_history": refinement_history or []})
-    def create_pr(self, issue_url: str, target_file: str, fixed_code: str): return self._request("POST", "ambassador/dispatch/", json={"issue_url": issue_url, "target_file": target_file, "fixed_code": fixed_code})
+    def get_graph(self, repo_id: str): return self._request("GET", f"graph/?repo_id={repo_id}")
+
+    def generate_docstring(self, repo_id: str, code: str, instruction: str):
+        return self._request("POST", "generate-docstring/", json={
+            "repo_id": repo_id,
+            "new_code": code,
+            "instruction": instruction
+        })
+
+    # --- CORRECTED: Replaced old `generate_fix` with new `generate_scaffold` ---
+    def generate_scaffold(self, repo_id: str, target_files: List[str], instruction: str, rca_report: str, refinement_history: Optional[List[Dict]] = None):
+        payload = {
+            "repo_id": repo_id,
+            "target_files": target_files,
+            "instruction": instruction,
+            "rca_report": rca_report,
+            "refinement_history": refinement_history or []
+        }
+        return self._request("POST", "scaffold/", json=payload)
+
+    # --- MODIFIED: Updated to handle a dictionary of files ---
+    def create_pr(self, issue_url: str, modified_files: Dict[str, str]):
+        return self._request("POST", "ambassador/dispatch/", json={"issue_url": issue_url, "modified_files": modified_files})
+
     def get_diplomat_report(self, issue_title: str, issue_body: str): return self._request("POST", "diplomat/find-similar-issues/", json={"issue_title": issue_title, "issue_body": issue_body})
     def validate_in_crucible(self, repo_url: str, target_file: str, modified_code: str): return self._request("POST", "crucible/validate/", json={"repo_url": repo_url, "target_file": target_file, "modified_code": modified_code})
-
+    def ingest_repository(self, repo_url: str): return self._request("POST", "ingest/", json={"repo_url": repo_url})
 
 # --- MODIFIED: Implemented a two-step provider/model selection process. ---
 def handle_model_selection(api: "LumiereAPIClient"):
@@ -340,6 +394,10 @@ class AnalysisSession:
 
         self.repo_id = self.repo_url.replace("https://github.com/", "").replace("/", "_")
         self.issues = []
+        # --- State for RCA-to-Fix Pipeline ---
+        self.last_rca_report = None
+        self.last_rca_issue_num = None
+        # ---
         self.api = LumiereAPIClient()
         cli_state["last_repo_url"] = self.repo_url
         save_config()
@@ -358,6 +416,33 @@ class AnalysisSession:
                 return False # Error already printed by client
             status.update("[green]✓ Backend connection established")
             time.sleep(0.5)
+
+        try:
+            do_embed = Confirm.ask(
+                "\n[bold]Do you want to clone and embed this repo for full analysis (briefing, rca, fix)?[/bold]\n"
+                "[dim](This can take a few minutes for large repos. Choose 'N' for issue listing only.)[/dim]",
+                default=True
+            )
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Analysis cancelled.[/yellow]")
+            return False
+
+        if do_embed:
+            with Status("[cyan]🚀 Beginning ingestion...[/cyan]", spinner="earth") as status:
+                status.update("[cyan]Cloning repository and analyzing files...[/cyan]")
+                ingest_result = self.api.ingest_repository(self.repo_url)
+
+                if ingest_result and ingest_result.get("status") == "success":
+                    status.update("[green]✓ Repository cloned and embedded successfully.[/green]")
+                    time.sleep(1)
+                else:
+                    error_details = ingest_result.get('error', 'Unknown error during ingestion.') if ingest_result else "No response from server."
+                    console.print(f"\n[bold red]❌ Ingestion failed:[/bold red] {error_details}")
+                    try:
+                        if not Confirm.ask("[yellow]Would you like to continue with limited (issue list only) analysis?[/yellow]", default=True):
+                            return False
+                    except KeyboardInterrupt:
+                        return False
 
         with Progress(
             SpinnerColumn(),
@@ -407,6 +492,89 @@ class AnalysisSession:
             )
         console.print(table)
 
+    def display_graph(self, graph_data: dict, repo_id: str):
+        """
+        [NEW & IMPROVED] Displays the architectural graph in a summarized, readable format.
+        It now groups and counts calls to avoid overwhelming the user.
+        """
+        console.print("\n[bold magenta]--- 🗺️ Cartographer's Architectural Graph (Summary) ---[/bold magenta]")
+
+        nodes = graph_data.get('nodes', {})
+        edges = graph_data.get('edges', [])
+
+        if not nodes:
+            console.print("[yellow]No architectural nodes were mapped for this project.[/yellow]")
+            return
+
+        # --- MAJOR IMPROVEMENT: Process edges to group and count calls ---
+        edges_by_source = defaultdict(lambda: {'imports': [], 'calls': defaultdict(int)})
+        for edge in edges:
+            source_id = edge['source']
+            edge_type = edge['type']
+            target_id = edge['target']
+
+            if edge_type == 'IMPORTS':
+                edges_by_source[source_id]['imports'].append(target_id)
+            elif edge_type == 'CALLS':
+                edges_by_source[source_id]['calls'][target_id] += 1
+
+        tree = Tree(f"[bold blue]Project: {repo_id}[/bold blue]", guide_style="cyan")
+        file_tree_nodes = {}
+
+        # First pass: Build the primary structure (Files, Classes, Functions)
+        for node_id, node_data in sorted(nodes.items()):
+            if node_data.get('type') == 'file':
+                lang = node_data.get('language', 'unknown')
+                icon = "📄"
+                if lang == 'python': icon = "🐍"
+                if lang == 'javascript': icon = "🟨"
+
+                file_branch = tree.add(f"{icon} [bold green]{node_id}[/bold green] [dim]({lang})[/dim]")
+                file_tree_nodes[node_id] = file_branch
+
+                for class_name in sorted(node_data.get('classes', [])):
+                    class_node_id = f"{node_id}::{class_name}"
+                    class_branch = file_branch.add(f"📦 [cyan]class[/cyan] {class_name}")
+
+                    # Attach methods to their class
+                    for method_name in sorted(nodes.get(class_node_id, {}).get('methods', [])):
+                        class_branch.add(f"  -  M [dim]{method_name}()[/dim]")
+
+                # Attach top-level functions to the file
+                for func_name in sorted(node_data.get('functions', [])):
+                    file_branch.add(f"  - F [dim]{func_name}()[/dim]")
+
+        # Second pass: Add the summarized relationships (imports and calls)
+        for source_id, relationships in edges_by_source.items():
+            if source_id in file_tree_nodes:
+                parent_branch = file_tree_nodes[source_id]
+
+                # Display Imports first
+                if relationships['imports']:
+                    import_branch = parent_branch.add("📥 [bold]Imports[/bold]")
+                    for target in sorted(list(set(relationships['imports']))): # Use set to remove duplicates
+                        import_branch.add(f"[yellow]{target}[/yellow]")
+
+                # Display Summarized Calls
+                if relationships['calls']:
+                    calls_branch = parent_branch.add("📞 [bold]Calls[/bold]")
+                    # Sort calls by frequency (most frequent first)
+                    sorted_calls = sorted(relationships['calls'].items(), key=lambda item: item[1], reverse=True)
+
+                    # Limit the number of calls displayed to prevent clutter
+                    max_calls_to_show = 15
+                    for i, (target, count) in enumerate(sorted_calls):
+                        if i >= max_calls_to_show:
+                            calls_branch.add(f"[dim]... and {len(sorted_calls) - max_calls_to_show} more.[/dim]")
+                            break
+
+                        count_str = f" [dim](x{count})[/dim]" if count > 1 else ""
+                        calls_branch.add(f"[magenta]{target}[/magenta]{count_str}")
+
+
+        console.print(tree)
+        console.print("\n[bold magenta]--------------------------------------------------------[/bold magenta]")
+
     def loop(self):
         """Main interactive loop for the analysis session."""
         display_interactive_help('analyze')
@@ -439,7 +607,6 @@ class AnalysisSession:
 
         console.print("[cyan]📊 Analysis session ended.[/cyan]")
 
-        # Restore main prompt session
         prompt_session = PromptSession(
             history=FileHistory(str(history_path)),
             completer=main_completer,
@@ -465,6 +632,18 @@ class AnalysisSession:
             self.display_issue_table()
             return
 
+        if command in ('g', 'graph'):
+            self.execute_action(command, {}) # Pass empty dict, issue not needed
+            console.print("\n[dim]💡 Type [bold]list[/bold] to see issues, or [bold]help[/bold] for commands.[/dim]")
+            return
+
+        if command in ('f', 'fix') and self.last_rca_report:
+             issue = next((iss for iss in self.issues if iss.get('number') == self.last_rca_issue_num), None)
+             if issue:
+                 self.execute_action(command, issue)
+                 console.print("\n[dim]💡 Type [bold]list[/bold] to see issues, or [bold]help[/bold] for commands.[/dim]")
+                 return
+
         if command not in ('f', 'fix', 'b', 'briefing', 'r', 'rca', 'd', 'details'):
             console.print("[red]❌ Unknown command. Type 'help' for available commands.[/red]")
             return
@@ -474,12 +653,27 @@ class AnalysisSession:
             issue_num_str = args[0]
         else:
             try:
-                issue_num_str = Prompt.ask(f"Which issue # for '[cyan]{command}[/cyan]'?").strip()
+                prompt_ask_text = f"Which issue # for '[cyan]{command}[/cyan]'?"
+                if command in ('f', 'fix') and self.last_rca_report:
+                     prompt_ask_text += f"\n[dim](Press Enter to fix issue #{self.last_rca_issue_num} from the last RCA)[/dim]"
+
+                issue_num_str = Prompt.ask(prompt_ask_text).strip()
             except KeyboardInterrupt:
                 console.print("\n[yellow]Command cancelled.[/yellow]")
                 return
 
-        if not issue_num_str or not issue_num_str.isdigit():
+        if not issue_num_str:
+            if command in ('f', 'fix') and self.last_rca_report:
+                issue = next((iss for iss in self.issues if iss.get('number') == self.last_rca_issue_num), None)
+                if issue:
+                    self.execute_action(command, issue)
+                else:
+                    console.print("[red]❌ Could not find issue from last RCA. Please specify an issue number.[/red]")
+            else:
+                console.print("[red]❌ Please enter a valid issue number.[/red]")
+            return
+
+        if not issue_num_str.isdigit():
             console.print("[red]❌ Please enter a valid issue number.[/red]")
             return
 
@@ -502,6 +696,20 @@ class AnalysisSession:
             self.handle_rca_command(issue)
             return
 
+        if command in ('g', 'graph'):
+            with Status("[cyan]🗺️ Contacting Cartographer's Architectural Graph...[/cyan]", spinner="earth") as status:
+                graph_data = self.api.get_graph(self.repo_id)
+                status.update("[green]✓ Graph retrieved.[/green]")
+                time.sleep(0.5)
+
+            if graph_data and graph_data.get("graph"):
+                self.display_graph(graph_data["graph"], graph_data["repo_id"])
+            elif graph_data and graph_data.get("message"):
+                console.print(Panel(graph_data["message"], title="[yellow]Graph Not Available[/yellow]", border_style="yellow"))
+            else:
+                 console.print("[red]❌ Could not retrieve architectural graph.[/red]")
+            return
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -511,7 +719,6 @@ class AnalysisSession:
                 task = progress.add_task(f"[cyan]📋 Getting briefing for issue #{issue['number']}...", total=None)
                 briefing_data = self.api.get_briefing(f"{self.repo_url}/issues/{issue['number']}")
                 progress.remove_task(task)
-
                 if briefing_data and briefing_data.get("briefing"):
                     console.print(Panel(
                         Markdown(briefing_data["briefing"]),
@@ -520,7 +727,6 @@ class AnalysisSession:
                     ))
                 else:
                     console.print("[red]❌ Could not retrieve briefing.[/red]")
-
             elif command in ("d", "details"):
                 issue_url = f"{self.repo_url}/issues/{issue['number']}"
                 console.print(Panel(
@@ -534,54 +740,64 @@ class AnalysisSession:
                 ))
 
     def handle_rca_command(self, issue: Dict):
-        """Handle root cause analysis command."""
+        """Handle the new context-aware root cause analysis command."""
         console.print(f"[cyan]🔍 Starting Root Cause Analysis for issue #{issue['number']}[/cyan]")
-
-        issue_desc = issue.get('description', '')
-        file_match = re.search(r'in `([\w./\\-]+\.py)`', issue_desc)
-
-        if file_match:
-            target_file = file_match.group(1)
-            console.print(f"[dim]✓ Auto-detected file: [yellow]{target_file}[/yellow][/dim]")
-        else:
-            try:
-                target_file = Prompt.ask("Enter the target file path for analysis")
-                if not target_file.strip():
-                    console.print("[yellow]❌ Root cause analysis cancelled.[/yellow]")
-                    return
-            except KeyboardInterrupt:
-                console.print("\n[yellow]Root cause analysis cancelled.[/yellow]")
-                return
+        issue_desc = f"Title: {issue.get('title', '')}\n\nDescription: {issue.get('description', '')}"
 
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             transient=True
         ) as progress:
-            task = progress.add_task("[cyan]🕵️ Performing root cause analysis...", total=None)
-            rca_data = self.api.get_rca(self.repo_url, issue.get('description', ''), target_file)
+            task = progress.add_task("[cyan]🕵️ Performing multi-file root cause analysis...", total=None)
+            rca_data = self.api.get_rca(self.repo_url, issue_desc)
             progress.remove_task(task)
 
         if rca_data and rca_data.get("analysis"):
-            console.print(Panel(
-                Markdown(rca_data["analysis"]),
-                title=f"[bold red]🕵️ Root Cause Analysis - Issue #{issue['number']}[/bold red]",
-                border_style="red"
-            ))
-        else:
-            console.print("[red]❌ Could not perform root cause analysis.[/red]")
+            analysis_text = rca_data["analysis"]
 
-    def _display_diff(self, original_code: str, new_code: str):
-        """Display a formatted diff of code changes."""
+            # --- THIS IS THE FIX ---
+            # Check if the analysis text is actually an error message from the API.
+            is_error = "Error from Gemini API" in analysis_text or "API Request Failed" in analysis_text
+
+            if is_error:
+                # It's an error, so display it but clear the state.
+                self.last_rca_report = None
+                self.last_rca_issue_num = None
+                console.print(Panel(
+                    Markdown(analysis_text),
+                    title=f"[bold red]🕵️ Root Cause Analysis - Issue #{issue['number']} (Failed)[/bold red]",
+                    border_style="red"
+                ))
+            else:
+                # It's a valid report, so save the state.
+                self.last_rca_report = analysis_text
+                self.last_rca_issue_num = issue['number']
+                console.print(Panel(
+                    Markdown(self.last_rca_report),
+                    title=f"[bold red]🕵️ Root Cause Analysis - Issue #{issue['number']}[/bold red]",
+                    border_style="red"
+                ))
+                console.print("\n[bold yellow]💡 Pro-tip:[/bold yellow] [dim]You can now type '[/dim][bold]f[/bold][dim]' to start fixing this issue.[/dim]")
+        else:
+            # This handles cases where the API response is malformed.
+            self.last_rca_report = None
+            self.last_rca_issue_num = None
+            console.print("[red]❌ Could not perform root cause analysis.[/red]")
+            
+
+    def _display_diff(self, original_code: str, new_code: str, filename: str):
+        """Display a formatted diff of code changes for a single file."""
         diff = difflib.unified_diff(
             original_code.splitlines(keepends=True),
             new_code.splitlines(keepends=True),
-            fromfile='🔴 Original',
-            tofile='🟢 Proposed'
+            fromfile=f'🔴 {filename} (Original)',
+            tofile=f'🟢 {filename} (Proposed)'
         )
-
         diff_panel_content = Text()
+        has_changes = False
         for line in diff:
+            has_changes = True
             if line.startswith('+++') or line.startswith('---'):
                 diff_panel_content.append(line, style="bold blue")
             elif line.startswith('+'):
@@ -593,209 +809,200 @@ class AnalysisSession:
             else:
                 diff_panel_content.append(line, style="dim")
 
+        if not has_changes:
+            return
+
         console.print(Panel(
             diff_panel_content,
-            title="[bold yellow]📝 Proposed Code Changes[/bold yellow]",
+            title=f"[bold yellow]📝 Proposed Changes for {filename}[/bold yellow]",
             expand=True,
             border_style="yellow"
         ))
 
+    def _extract_filenames_from_rca(self, rca_report: str) -> List[str]:
+        """Extracts filenames from markdown code fences or inline backticks."""
+        pattern = r'`([\w./\\-]+)`'
+        matches = re.findall(pattern, rca_report)
+        filenames = sorted(list(set(matches)))
+        return [f for f in filenames if '.' in f and f.lower() not in ['true', 'false']]
+
     def handle_fix_dialogue(self, issue: Dict):
-        """Handle the complete fix dialogue workflow."""
+        """Handle the complete fix dialogue, now driven by RCA and with documentation step."""
         console.print(Panel(
             f"[bold cyan]🤝 Socratic Dialogue[/bold cyan] starting for:\n"
             f"[bold green]Issue #{issue['number']}: {issue['title']}[/bold green]",
             border_style="cyan"
         ))
 
-        issue_desc = issue.get('description', '')
-        issue_title = issue.get('title', '')
+        if not self.last_rca_report or self.last_rca_issue_num != issue['number']:
+             console.print("[yellow]⚠️  Warning: No Root Cause Analysis has been run for this issue.[/yellow]")
+             try:
+                 if Confirm.ask("[bold]Would you like to run RCA first to provide context for the fix?[/bold]", default=True):
+                     self.handle_rca_command(issue)
+                     if not self.last_rca_report:
+                         console.print("[red]❌ Cannot proceed with fix without a successful RCA.[/red]")
+                         return
+                 else:
+                     console.print("[red]❌ Fix command cancelled. Please run RCA first.[/red]")
+                     return
+             except KeyboardInterrupt:
+                 console.print("\n[yellow]Fix command cancelled.[/yellow]")
+                 return
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            transient=True
-        ) as progress:
-            task = progress.add_task("[cyan]🕵️ Engaging The Diplomat...", total=None)
-            diplomat_report = self.api.get_diplomat_report(issue_title, issue_desc)
-            progress.remove_task(task)
+        issue_desc = f"Title: {issue.get('title', '')}\n\nDescription: {issue.get('description', '')}"
 
-        if diplomat_report and diplomat_report.get("summary"):
-            console.print(Panel(
-                Markdown(diplomat_report["summary"]),
-                title="[bold blue]🕵️ Diplomat Intelligence Briefing[/bold blue]",
-                border_style="blue"
-            ))
+        target_files = self._extract_filenames_from_rca(self.last_rca_report)
+        if not target_files:
+            console.print("[red]❌ Could not automatically determine target files from the RCA report.[/red]")
+            return
 
-            try:
-                if not Confirm.ask("\n[bold]🚀 Proceed with generating a fix?[/bold]", default=True):
-                    console.print("[yellow]🛑 Operation cancelled.[/yellow]")
-                    return
-            except KeyboardInterrupt:
-                console.print("\n[yellow]🛑 Operation cancelled.[/yellow]")
-                return
+        console.print(f"[dim]✓ Identified suspect files from RCA: {', '.join(target_files)}[/dim]")
 
-        file_match = re.search(r'in `([\w./\\-]+\.py)`', issue_desc)
-        if not file_match:
-            try:
-                target_file = Prompt.ask("Could not auto-detect target file. Please enter the file path")
-                if not target_file.strip():
-                    console.print("[red]❌ Cannot proceed without target file.[/red]")
-                    return
-            except KeyboardInterrupt:
-                console.print("\n[yellow]🛑 Operation cancelled.[/yellow]")
-                return
-        else:
-            target_file = file_match.group(1)
-            console.print(f"[dim]✓ Auto-detected file: [yellow]{target_file}[/yellow][/dim]")
-
-        instruction = f"Fix this bug in '{target_file}': {issue_title}\n\n{issue_desc}"
-        current_code = ""
-        original_code = ""
         refinement_history = []
         iteration_count = 0
         max_iterations = 5
+        modified_files = {}
+        original_contents = {}
+        is_documented = False
 
         while iteration_count < max_iterations:
             iteration_count += 1
-            console.print(f"\n[dim]🔄 Iteration {iteration_count}/{max_iterations}[/dim]")
 
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                transient=True
-            ) as progress:
-                task = progress.add_task(f"[cyan]⚡ Generating code fix...", total=None)
-                fix_data = self.api.generate_fix(self.repo_id, target_file, instruction, refinement_history)
-                progress.remove_task(task)
+            if not modified_files or refinement_history:
+                console.print(f"\n[dim]🔄 Iteration {iteration_count}/{max_iterations}[/dim]")
+                with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), transient=True) as progress:
+                    task = progress.add_task(f"[cyan]⚡ Generating multi-file code fix...", total=None)
+                    fix_data = self.api.generate_scaffold(self.repo_id, target_files, issue_desc, self.last_rca_report, refinement_history)
+                    progress.remove_task(task)
 
-            if not fix_data or "generated_code" not in fix_data:
-                console.print("[red]❌ Failed to generate fix.[/red]")
-                return
+                if not fix_data:
+                    console.print("[red]❌ Failed to generate fix or no files were modified.[/red]")
+                    return
 
-            current_code = fix_data["generated_code"]
-            if not original_code:
-                original_code = fix_data.get("original_content", "")
+                if "modified_files" not in fix_data or not fix_data["modified_files"]:
+                    console.print("[red]❌ Failed to generate fix or no files were modified.[/red]")
+                    if fix_data and fix_data.get("llm_response"): console.print(Panel(Text(fix_data["llm_response"], overflow="fold"), title="[yellow]🔍 LLM Raw Response (for debugging)[/yellow]", border_style="yellow"))
+                    return
 
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[bold cyan][progress.description]{task.description}"),
-                transient=True
-            ) as progress:
-                task = progress.add_task(f"🔥 Entering The Crucible...", total=None)
-                validation_result = self.api.validate_in_crucible(self.repo_url, target_file, current_code)
-                progress.remove_task(task)
-
-            if not validation_result:
-                console.print(Panel(
-                    "🔥 [bold red]Crucible Service Error[/bold red]\n"
-                    "The validation service is not available.\n"
-                    "[dim]💡 Please check that Docker is running and the service is healthy.[/dim]",
-                    title="[red]🔥 Crucible Report[/red]",
-                    border_style="red"
-                ))
-                crucible_passed = False
-            else:
-                crucible_passed = validation_result.get("status") == "passed"
-                if crucible_passed:
-                    console.print(Panel(
-                        "✅ [bold green]All tests passed![/bold green]\n"
-                        "The proposed changes are validated and ready.",
-                        title="[green]🔥 Crucible Report[/green]",
-                        border_style="green"
-                    ))
-                else:
-                    logs = validation_result.get('logs', 'No logs available')
-                    console.print(Panel(
-                        f"❌ [bold red]Validation Failed[/bold red]\n"
-                        f"[bold]Test Results:[/bold]\n{logs}",
-                        title="[red]🔥 Crucible Report[/red]",
-                        border_style="red"
-                    ))
+                modified_files = fix_data["modified_files"]
+                original_contents = fix_data["original_contents"]
+                is_documented = False
 
             console.rule("[bold]📝 Review Proposed Changes[/bold]")
-            self._display_diff(original_code, current_code)
+            for filename, new_code in modified_files.items():
+                self._display_diff(original_contents.get(filename, ""), new_code, filename)
 
-            try:
-                if crucible_passed:
-                    choice = Prompt.ask(
-                        "\n[bold]✅ Tests passed! Choose action:[/bold]\n"
-                        "[bold green](a)[/bold green] Approve & create PR\n"
-                        "[bold yellow](r)[/bold yellow] Refine with feedback\n"
-                        "[bold red](c)[/bold red] Cancel",
-                        choices=['a', 'r', 'c'],
-                        default='a'
-                    ).lower()
-                else:
-                    choice = Prompt.ask(
-                        "\n[bold]❌ Tests failed! Choose action:[/bold]\n"
-                        "[bold yellow](r)[/bold yellow] Refine with feedback\n"
-                        "[bold orange3](a)[/bold orange3] Approve anyway & create PR\n"
-                        "[bold red](c)[/bold red] Cancel",
-                        choices=['a', 'r', 'c'],
-                        default='r'
-                    ).lower()
-            except KeyboardInterrupt:
-                console.print("\n[yellow]🛑 Operation cancelled.[/yellow]")
-                break
+            all_validations_passed = True
+
+            # Create a list of files that are actually testable (i.e., not docs)
+            files_to_validate = [
+                f for f in modified_files.keys()
+                if not f.lower().endswith(('.md', '.txt', '.json', '.toml', '.yaml', '.yml'))
+            ]
+
+            if not files_to_validate:
+                 console.print(Panel("✅ [bold green]No runnable code files to validate. Skipping Crucible.[/bold green]", title="[green]🔥 Crucible Report[/green]", border_style="green"))
+            else:
+                for filename in files_to_validate:
+                    new_code = modified_files[filename]
+                    with Progress(SpinnerColumn(), TextColumn("[bold cyan][progress.description]{task.description}"), transient=True) as progress:
+                        task = progress.add_task(f"🔥 Entering The Crucible for {filename}...", total=None)
+                        validation_result = self.api.validate_in_crucible(self.repo_url, filename, new_code)
+                        progress.remove_task(task)
+
+                    if not validation_result or validation_result.get("status") != "passed":
+                        all_validations_passed = False
+                        console.print(Panel(f"❌ [bold red]Validation Failed for {filename}[/bold red]\n[bold]Test Results:[/bold]\n{validation_result.get('logs', 'No logs') if validation_result else 'Crucible service error'}", title=f"[red]🔥 Crucible Report: {filename}[/red]", border_style="red"))
+                        # Immediately stop validation on the first failure
+                        break
+
+            if all_validations_passed and files_to_validate:
+                 console.print(Panel("✅ [bold green]All tests passed for all modified files![/bold green]", title="[green]🔥 Crucible Report[/green]", border_style="green"))
+
+            # Interactive loop for user actions (approve, refine, etc.)
+            while True:
+                try:
+                    action_choices = ['r', 'c']
+                    prompt_text = ""
+
+                    if all_validations_passed:
+                        action_choices.append('a')
+                        prompt_text += "\n[bold]✅ All tests passed! Choose action:[/bold]\n[bold green](a)[/bold green] Approve & create PR\n"
+                        if not is_documented and any(f.endswith((".py", ".js", ".ts")) for f in modified_files.keys()):
+                           action_choices.append('d')
+                           prompt_text += "[bold blue](d)[/bold blue] Document the changes\n"
+                    else:
+                        prompt_text += "\n[bold red]❌ Validation failed. Choose action:[/bold]\n"
+
+                    prompt_text += "[bold yellow](r)[/bold yellow] Refine with feedback\n"
+                    prompt_text += "[bold red](c)[/bold red] Cancel"
+
+                    default_choice = 'a' if all_validations_passed else 'r'
+                    choice = Prompt.ask(prompt_text, choices=action_choices, default=default_choice).lower()
+
+                except KeyboardInterrupt:
+                    choice = 'c'
+
+                if choice == 'd':
+                    if is_documented:
+                        console.print("[yellow]Code is already documented.[/yellow]")
+                        continue
+                    if not all_validations_passed:
+                        console.print("[red]Cannot document code that has failed validation.[/red]")
+                        continue
+
+                    documented_files = {}
+                    with Status("[bold blue]✒️  Calling The Chronicler agent to document changes...[/bold blue]") as status:
+                        for filename, code in modified_files.items():
+                            if not any(filename.endswith(ext) for ext in [".py", ".js", ".ts"]): continue
+                            status.update(f"[bold blue]✒️  Documenting {filename}...[/bold blue]")
+                            doc_result = self.api.generate_docstring(self.repo_id, code, issue_desc)
+                            if doc_result and doc_result.get("docstring"):
+                                documented_code = _insert_docstring_into_code(code, doc_result["docstring"])
+                                documented_files[filename] = documented_code
+                            else:
+                                documented_files[filename] = code
+                    modified_files.update(documented_files)
+                    is_documented = True
+                    console.print("[green]✓ Documentation complete.[/green]")
+                    console.rule("[bold]📝 Review Updated Changes with Documentation[/bold]")
+                    for filename, new_code in modified_files.items():
+                        self._display_diff(original_contents.get(filename, ""), new_code, filename)
+                    continue
+
+                if choice == 'c': break
+                if choice == 'a' and all_validations_passed: break
+                if choice == 'r': break
 
             if choice == 'c':
                 console.print("[yellow]🛑 Operation cancelled.[/yellow]")
                 break
 
-            if choice == 'a':
-                if not crucible_passed:
-                    try:
-                        confirmed = Confirm.ask(
-                            "[bold yellow]⚠️  Tests failed. Create PR anyway?[/bold yellow]",
-                            default=False
-                        )
-                        if not confirmed:
-                            console.print("[yellow]🛑 PR creation cancelled.[/yellow]")
-                            continue
-                    except KeyboardInterrupt:
-                        console.print("\n[yellow]🛑 Operation cancelled.[/yellow]")
-                        break
-
-                with Progress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
-                    transient=True
-                ) as progress:
-                    task = progress.add_task("[cyan]🚀 Dispatching Ambassador...", total=None)
-                    pr_data = self.api.create_pr(f"{self.repo_url}/issues/{issue['number']}", target_file, current_code)
-                    progress.remove_task(task)
-
-                if pr_data and pr_data.get("pull_request_url"):
-                    pr_url = pr_data["pull_request_url"]
-                    console.print(Panel(
-                        f"✅ [bold green]Success![/bold green]\n"
-                        f"Pull request created: [link={pr_url}]{pr_url}[/link]\n\n"
-                        f"[dim]🎉 The Ambassador has successfully delivered your fix![/dim]",
-                        title="[green]🚀 Mission Complete[/green]",
-                        border_style="green"
-                    ))
-                else:
-                    console.print("[red]❌ Failed to create pull request.[/red]")
-                break
-
             if choice == 'r':
                 if iteration_count >= max_iterations:
-                    console.print(f"[yellow]⚠️  Maximum iterations ({max_iterations}) reached.[/yellow]")
+                    console.print(f"[yellow]⚠️ Maximum iterations ({max_iterations}) reached.[/yellow]")
                     break
-
                 try:
                     feedback = Prompt.ask("\n[bold]💭 Your feedback for improvement[/bold]")
                     if not feedback.strip():
-                        console.print("[yellow]⚠️  Empty feedback provided, skipping refinement.[/yellow]")
+                        console.print("[yellow]⚠️ Empty feedback, skipping refinement.[/yellow]")
                         continue
-                    refinement_history.append({
-                        "feedback": feedback,
-                        "code": current_code
-                    })
+                    refinement_history.append({"feedback": feedback, "code_generated": modified_files})
+                    modified_files.clear()
+                    continue
                 except KeyboardInterrupt:
-                    console.print("\n[yellow]🛑 Refinement cancelled by user.[/yellow]")
                     break
+
+            if choice == 'a' and all_validations_passed:
+                with Progress(SpinnerColumn(),TextColumn("[progress.description]{task.description}"),transient=True) as progress:
+                    task = progress.add_task("[cyan]🚀 Dispatching Ambassador for multi-file PR...", total=None)
+                    pr_data = self.api.create_pr(f"{self.repo_url}/issues/{issue['number']}", modified_files)
+                    progress.remove_task(task)
+                if pr_data and pr_data.get("pull_request_url"):
+                    console.print(Panel(f"✅ [bold green]Success![/bold green]\nPull request created: [link={pr_data['pull_request_url']}]{pr_data['pull_request_url']}[/link]", title="[green]🚀 Mission Complete[/green]", border_style="green"))
+                else:
+                    console.print("[red]❌ Failed to create pull request.[/red]")
+                break
 
 # --- Utility Function for Help Display ---
 def display_interactive_help(context: str = 'main'):
@@ -812,11 +1019,12 @@ def display_interactive_help(context: str = 'main'):
         if cli_state.get("model"):
             help_table.add_row("config / c", "Change LLM model or view settings")
         else:
-            help_table.add_row("config / c", "Choose LLM provider & model") # <--- MODIFIED
+            help_table.add_row("config / c", "Choose LLM provider & model")
         help_table.add_row("help / h", "Show this help menu")
         help_table.add_row("exit / quit", "Exit the application")
     elif context == 'analyze':
         help_table.add_row("list / l", "Show prioritized issues")
+        help_table.add_row("graph / g", "Display the repository's architectural graph")
         help_table.add_row("briefing / b", "Show issue briefing")
         help_table.add_row("details / d", "Show issue metadata")
         help_table.add_row("rca / r", "Root cause analysis")

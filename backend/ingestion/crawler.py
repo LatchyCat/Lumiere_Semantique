@@ -168,8 +168,110 @@ class IntelligentCrawler:
         print("Scanning for relevant files...")
         files_to_process = []
         included_extensions = [
-            '*.py', '*.md', '*.txt', '*.rst', '*.json', '*.toml', '*.yaml',
-            '*.js', 'Dockerfile', 'LICENSE'
+            # Python ecosystem
+            '*.py', '*.pyx', '*.pyi', '*.pyw',
+
+            # Documentation
+            '*.md', '*.txt', '*.rst', '*.adoc', '*.asciidoc',
+
+            # Configuration files
+            '*.json', '*.toml', '*.yaml', '*.yml', '*.ini', '*.cfg', '*.conf',
+            '*.xml', '*.properties', '*.env', '*.dotenv',
+
+            # JavaScript/TypeScript ecosystem
+            '*.js', '*.mjs', '*.cjs', '*.ts', '*.tsx', '*.jsx',
+            '*.vue', '*.svelte', '*.astro',
+
+            # Web technologies
+            '*.html', '*.htm', '*.xhtml', '*.css', '*.scss', '*.sass', '*.less',
+            '*.styl', '*.stylus',
+
+            # Compiled languages
+            '*.java', '*.kt', '*.kts', '*.scala', '*.groovy',  # JVM languages
+            '*.c', '*.cpp', '*.cxx', '*.cc', '*.h', '*.hpp', '*.hxx',  # C/C++
+            '*.cs', '*.vb', '*.fs', '*.fsx',  # .NET languages
+            '*.go', '*.mod', '*.sum',  # Go
+            '*.rs', '*.rlib',  # Rust
+            '*.swift',  # Swift
+            '*.m', '*.mm',  # Objective-C
+
+            # Scripting languages
+            '*.rb', '*.rake', '*.gemspec',  # Ruby
+            '*.php', '*.phtml',  # PHP
+            '*.pl', '*.pm', '*.t',  # Perl
+            '*.lua',  # Lua
+            '*.r', '*.R',  # R
+            '*.jl',  # Julia
+            '*.dart',  # Dart
+
+            # Shell scripts
+            '*.sh', '*.bash', '*.zsh', '*.fish', '*.csh', '*.tcsh',
+            '*.bat', '*.cmd', '*.ps1', '*.psm1',
+
+            # Database
+            '*.sql', '*.sqlite', '*.db',
+
+            # Data formats
+            '*.csv', '*.tsv', '*.jsonl', '*.ndjson',
+            '*.parquet', '*.avro', '*.orc',
+
+            # Infrastructure as Code
+            '*.tf', '*.tfvars', '*.hcl',  # Terraform
+            '*.k8s.yaml', '*.k8s.yml',  # Kubernetes (if you want to be specific)
+
+            # CI/CD
+            '*.gitlab-ci.yml', '*.github/workflows/*.yml', '*.github/workflows/*.yaml',
+            '*.jenkinsfile', 'Jenkinsfile',
+
+            # Mobile development
+            '*.gradle', '*.gradle.kts',  # Android
+
+            # Game development
+            '*.cs', '*.shader', '*.hlsl', '*.glsl',  # Unity/Graphics
+            '*.gd', '*.tres', '*.tscn',  # Godot
+
+            # Functional languages
+            '*.hs', '*.lhs',  # Haskell
+            '*.ml', '*.mli',  # OCaml
+            '*.elm',  # Elm
+            '*.clj', '*.cljs', '*.cljc', '*.edn',  # Clojure
+            '*.ex', '*.exs',  # Elixir
+            '*.erl', '*.hrl',  # Erlang
+
+            # Markup and templating
+            '*.tex', '*.latex',  # LaTeX
+            '*.handlebars', '*.hbs', '*.mustache',  # Templates
+            '*.twig', '*.blade.php', '*.erb',  # Server-side templates
+
+            # Special Google/Cloud files
+            '*.gs',  # Google Apps Script
+            '*.clasp.json',  # Google Apps Script
+
+            # Build files and configs (without extensions)
+            'Dockerfile', 'Containerfile', 'docker-compose.yml', 'docker-compose.yaml',
+            'Makefile', 'makefile', 'GNUmakefile',
+            'CMakeLists.txt', 'meson.build',
+            'package.json', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
+            'requirements.txt', 'requirements-dev.txt', 'Pipfile', 'Pipfile.lock',
+            'pyproject.toml', 'setup.py', 'setup.cfg', 'poetry.lock',
+            'Cargo.toml', 'Cargo.lock',
+            'go.mod', 'go.sum',
+            'build.gradle', 'build.gradle.kts', 'settings.gradle',
+            'pom.xml', 'build.xml',
+            'LICENSE', 'LICENSE.txt', 'LICENSE.md',
+            'README', 'README.txt', 'README.md', 'README.rst',
+            'CHANGELOG', 'CHANGELOG.md', 'CHANGELOG.txt',
+            'CONTRIBUTING.md', 'CODE_OF_CONDUCT.md',
+            '.gitignore', '.gitattributes', '.editorconfig',
+            '.eslintrc.js', '.eslintrc.json', '.prettierrc',
+            'tsconfig.json', 'jsconfig.json',
+            'webpack.config.js', 'vite.config.js', 'rollup.config.js',
+            'tailwind.config.js', 'postcss.config.js',
+            'babel.config.js', '.babelrc',
+            'jest.config.js', 'vitest.config.js',
+            'tox.ini', 'pytest.ini', '.coveragerc',
+            'mypy.ini', '.mypy.ini', 'flake8.cfg', '.flake8',
+            'black.toml', 'isort.cfg', '.isort.cfg'
         ]
         excluded_dirs = {'.git', '__pycache__', 'venv', 'node_modules', '.vscode', '.idea', 'dist', 'build'}
 

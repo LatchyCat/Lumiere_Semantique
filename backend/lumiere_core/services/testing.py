@@ -1,12 +1,8 @@
-# In ~/lumiere_semantique/backend/lumiere_core/services/testing.py
-# In lumiere_core/services/testing.py
-from typing import Dict, List, Optional
-import os
+# backend/lumiere_core/services/testing.py
 import logging
-
+from typing import Dict, List, Optional, Any, Set
+from . import llm_service
 from .ollama import search_index
-from .ollama_service import generate_text
-# --- NEW: Import the shared cleaning utility ---
 from .utils import clean_llm_code_output
 
 # Set up logging for better debugging
@@ -15,72 +11,158 @@ logger = logging.getLogger(__name__)
 def generate_tests_for_code(repo_id: str, new_code: str, instruction: str) -> Dict[str, str]:
     """
     The core logic for the Test Generation Agent.
+    It finds existing test files in the repository to learn the project's testing
+    style and then generates a new test function consistent with that style.
 
     Args:
-        repo_id: Identifier for the repository
-        new_code: The code that needs tests generated for it
-        instruction: Additional instructions for test generation
+        repo_id: The unique identifier for the repository.
+        new_code: The new code for which tests need to be generated.
+        instruction: A natural language description of the code's purpose.
 
     Returns:
-        Dictionary containing the generated tests
+        A dictionary containing the generated test code or an error message.
+        Format: {"generated_tests": str, "error": str (optional)}
     """
-    print(f"Initiating Test Generation Agent for repo '{repo_id}'")
+    logger.info(f"Initiating Test Generation Agent for repo '{repo_id}'")
 
-    if not repo_id or not new_code:
-        return {"generated_tests": "", "error": "Missing required parameters: repo_id and new_code"}
+    # Input validation
+    if not all([repo_id, new_code]):
+        error_msg = "Missing required parameters: repo_id and new_code."
+        logger.error(error_msg)
+        return {"generated_tests": "", "error": error_msg}
+
+    if not instruction:
+        logger.warning("No instruction provided, using default description")
+        instruction = "Generate appropriate tests for the given code"
 
     try:
-        # --- Step 1: Finding existing test patterns with RAG ---
-        print("   -> Step 1: Finding existing test patterns with RAG...")
-        index_path = f"{repo_id}_faiss.index"
-        map_path = f"{repo_id}_id_map.json"
-        search_query = f"Example test cases for python code like this: {instruction}"
+        # --- Step 1: Find existing test patterns with RAG ---
+        logger.info("Step 1: Finding existing test patterns with RAG...")
+        test_context_string = _find_existing_test_patterns(repo_id, instruction)
 
-        try:
-            context_chunks = search_index(
-                query_text=search_query,
-                model_name='snowflake-arctic-embed2:latest',
-                index_path=index_path,
-                map_path=map_path,
-                k=7
-            )
-        except Exception as e:
-            print(f"   -> Warning: RAG search failed: {e}. Proceeding without context.")
-            context_chunks = []
+        # --- Step 2: Construct the Reinforced Prompt ---
+        logger.info("Step 2: Constructing reinforced test generation prompt...")
+        prompt = _build_test_generation_prompt(test_context_string, new_code)
 
-        test_context_string = ""
-        found_test_files = set()
+        # --- Step 3: Generate the Test Code ---
+        logger.info("Step 3: Generating test code...")
+        raw_generated_tests = _generate_test_code(prompt)
 
-        for chunk in context_chunks:
-            file_path = chunk.get('file_path', '')
-            chunk_text = chunk.get('text', '')
+        # --- Step 4: Clean and validate the output ---
+        logger.info("Step 4: Cleaning and validating the generated test code...")
+        final_tests = clean_llm_code_output(raw_generated_tests)
 
-            if 'test' in file_path.lower() and file_path not in found_test_files and chunk_text:
-                test_context_string += f"--- Example test from file '{file_path}' ---\n{chunk_text}\n\n"
-                found_test_files.add(file_path)
+        # Validate the generated tests
+        validation_result = validate_test_code(final_tests)
+        if not validation_result["is_valid"]:
+            logger.warning(f"Generated test code has validation issues: {validation_result['syntax_errors']}")
+            # Still return the code but include warning in logs
 
-        if not test_context_string:
-            test_context_string = "No specific test patterns found. Please generate a standard pytest function."
-            print("   -> Warning: No existing test files found via RAG. Will generate a generic test.")
-        else:
-            print(f"   -> Found test patterns from files: {list(found_test_files)}")
+        logger.info("✓ Test generation completed successfully.")
+        return {"generated_tests": final_tests}
 
-        # --- Step 2: The Reinforced Prompt ---
-        print("   -> Step 2: Constructing reinforced test generation prompt...")
-        prompt = f"""You are an expert QA Engineer and Python programmer. Your task is to write a new unit test for a piece of code.
+    except Exception as e:
+        error_msg = f"An unexpected error occurred during test generation: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        return {"generated_tests": "", "error": error_msg}
+
+
+def _find_existing_test_patterns(repo_id: str, instruction: str) -> str:
+    """
+    Find existing test patterns using RAG search.
+
+    Args:
+        repo_id: Repository identifier
+        instruction: Code description for search context
+
+    Returns:
+        String containing formatted test examples or default message
+    """
+    search_query = f"Example test cases for python code like this: {instruction}"
+
+    try:
+        # CORRECTED CALL: Pass repo_id directly to the centralized search function.
+        context_chunks = search_index(
+            query_text=search_query,
+            model_name='snowflake-arctic-embed2:latest',
+            repo_id=repo_id,
+            k=7  # Look for up to 7 relevant chunks
+        )
+    except Exception as e:
+        logger.warning(f"RAG search failed for test generation in repo '{repo_id}': {e}")
+        context_chunks = []
+
+    test_context_string = ""
+    found_test_files: Set[str] = set()
+
+    for chunk in context_chunks:
+        file_path = chunk.get('file_path', '')
+        chunk_text = chunk.get('text', '')
+
+        # Heuristic to identify test files and avoid duplicates
+        if (_is_test_file(file_path) and
+            file_path not in found_test_files and
+            chunk_text and
+            len(chunk_text.strip()) > 10):  # Ensure meaningful content
+
+            test_context_string += f"--- Example test from file `{file_path}` ---\n```python\n{chunk_text}\n```\n\n"
+            found_test_files.add(file_path)
+
+    if not test_context_string:
+        test_context_string = "No specific test patterns found. Please generate a standard `pytest` function using `assert`."
+        logger.info("Warning: No existing test files found via RAG. Will generate a generic test.")
+    else:
+        logger.info(f"Found test patterns from files: {list(found_test_files)}")
+
+    return test_context_string
+
+
+def _is_test_file(file_path: str) -> bool:
+    """Check if a file path indicates a test file."""
+    if not file_path:
+        return False
+
+    file_path_lower = file_path.lower()
+    return (
+        'test' in file_path_lower or
+        file_path_lower.endswith('_test.py') or
+        file_path_lower.startswith('test_') or
+        '/tests/' in file_path_lower
+    )
+
+
+def _build_test_generation_prompt(test_context_string: str, new_code: str) -> str:
+    """
+    Build the prompt for test generation.
+
+    Args:
+        test_context_string: Existing test examples
+        new_code: Code to generate tests for
+
+    Returns:
+        Formatted prompt string
+    """
+    return f"""You are an expert QA Engineer and Python programmer. Your task is to write a new unit test for a piece of code.
 
 **YOUR INSTRUCTIONS:**
-1.  **Analyze "EXISTING TEST EXAMPLES"** to understand the project's testing style. Pay close attention:
-    *   Are the tests inside a `class`?
-    *   Do they use `self.assertEqual`, or plain `assert`?
-    *   Are there fixtures or `setup` methods?
-2.  **Analyze the "NEW CODE TO BE TESTED"** to understand its functionality.
-3.  **Write a new test function.** It is CRITICAL that you exactly match the style of the examples. If the examples are standalone functions (e.g., `def test_...():`), your test MUST also be a standalone function. DO NOT invent a class if the examples do not use one.
-4.  **Output ONLY raw Python code.** Do not include any explanations, commentary, or Markdown fences.
+1. **Analyze "EXISTING TEST EXAMPLES"** to understand the project's testing style. Pay close attention to:
+   * Imports (e.g., `unittest`, `pytest`).
+   * Structure: Are tests inside a `class`?
+   * Assertions: Do they use `self.assertEqual` or plain `assert`?
+   * Setup: Are there fixtures or `setUp` methods?
+
+2. **Analyze the "NEW CODE TO BE TESTED"** to understand its functionality.
+
+3. **Write a complete test function.** It is CRITICAL that you exactly match the style of the examples.
+   If the examples are standalone functions (e.g., `def test_...():`), your test MUST also be a standalone function.
+   DO NOT invent a class if the examples do not use one.
+
+4. **Output ONLY raw Python code.** Do not include any explanations, commentary, or Markdown fences like ```python.
 
 ---
 ### EXISTING TEST EXAMPLES
 {test_context_string}
+
 ---
 ### NEW CODE TO BE TESTED
 ```python
@@ -89,32 +171,38 @@ def generate_tests_for_code(repo_id: str, new_code: str, instruction: str) -> Di
 
 Now, generate ONLY the new, stylistically-consistent test function."""
 
-        # --- Step 3: Generate the Test Code ---
-        print("   -> Step 3: Sending request to code generation model 'qwen2.5-coder:3b'...")
-        try:
-            raw_generated_tests = generate_text(prompt, model_name='qwen2.5-coder:3b')
-        except Exception as e:
-            print(f"   -> Error: Failed to generate tests with LLM: {e}")
-            return {"generated_tests": "", "error": f"LLM generation failed: {str(e)}"}
 
-        # --- Step 4: Clean the output ---
-        print("   -> Step 4: Cleaning and finalizing the generated test code...")
-        try:
-            final_tests = clean_llm_code_output(raw_generated_tests)
-        except Exception as e:
-            print(f"   -> Warning: Failed to clean LLM output: {e}. Using raw output.")
-            final_tests = raw_generated_tests
+def _generate_test_code(prompt: str) -> str:
+    """
+    Generate test code using the LLM service.
 
-        print("   -> ✓ Test generation completed successfully.")
-        return {"generated_tests": final_tests}
+    Args:
+        prompt: The formatted prompt for test generation
+
+    Returns:
+        Generated test code
+
+    Raises:
+        Exception: If LLM generation fails
+    """
+    model_to_use = "ollama/qwen2.5-coder:3b"
+    logger.info(f"Sending request to code generation model '{model_to_use}'...")
+
+    try:
+        # Use the master LLM service and pass the full model identifier
+        raw_generated_tests = llm_service.generate_text(prompt, model_identifier=model_to_use)
+
+        if not raw_generated_tests or not raw_generated_tests.strip():
+            raise ValueError("LLM returned empty response")
+
+        return raw_generated_tests
 
     except Exception as e:
-        error_msg = f"Unexpected error in test generation: {str(e)}"
-        print(f"   -> Error: {error_msg}")
-        logger.error(error_msg, exc_info=True)
-        return {"generated_tests": "", "error": error_msg}
+        logger.error(f"LLM generation failed for tests: {e}")
+        raise Exception(f"LLM generation failed: {str(e)}")
 
-def validate_test_code(test_code: str) -> Dict[str, any]:
+
+def validate_test_code(test_code: str) -> Dict[str, Any]:
     """
     Validates the generated test code for basic syntax and structure.
 
@@ -122,84 +210,148 @@ def validate_test_code(test_code: str) -> Dict[str, any]:
         test_code: The generated test code to validate
 
     Returns:
-        Dictionary with validation results
+        Dictionary with validation results containing:
+        - is_valid: bool
+        - has_test_function: bool
+        - syntax_errors: List[str]
     """
     validation_result = {
         "is_valid": False,
         "has_test_function": False,
         "syntax_errors": [],
-        "warnings": []
     }
 
     if not test_code or not test_code.strip():
         validation_result["syntax_errors"].append("Test code is empty")
         return validation_result
 
-    # Check for basic test function pattern
+    # Check for test function presence
     if "def test_" in test_code:
         validation_result["has_test_function"] = True
     else:
-        validation_result["warnings"].append("No test function found (should start with 'def test_')")
+        validation_result["syntax_errors"].append("No test function found (should start with 'def test_')")
 
-    # Basic syntax validation
+    # Validate syntax
     try:
         compile(test_code, '<string>', 'exec')
         validation_result["is_valid"] = True
     except SyntaxError as e:
-        validation_result["syntax_errors"].append(f"Syntax error: {str(e)}")
+        error_msg = f"Syntax error: {e.msg}"
+        if e.lineno:
+            error_msg += f" on line {e.lineno}"
+        validation_result["syntax_errors"].append(error_msg)
     except Exception as e:
-        validation_result["syntax_errors"].append(f"Compilation error: {str(e)}")
+        validation_result["syntax_errors"].append(f"Unexpected compilation error: {str(e)}")
 
     return validation_result
 
+
 def generate_test_suggestions(code_snippet: str) -> List[str]:
     """
-    Generates suggestions for what types of tests should be written for the given code.
+    Generates high-level suggestions for what types of tests should be written.
 
     Args:
         code_snippet: The code to analyze for test suggestions
 
     Returns:
-        List of test suggestions
+        List of test case suggestions
     """
+    if not code_snippet or not code_snippet.strip():
+        return ["No code provided for analysis"]
+
     suggestions = []
-
-    if not code_snippet:
-        return suggestions
-
     code_lower = code_snippet.lower()
 
-    # Basic suggestions based on code patterns
+    # Function-based suggestions
     if "def " in code_lower:
-        suggestions.append("Test the function with valid inputs")
-        suggestions.append("Test edge cases and boundary conditions")
-        suggestions.append("Test with invalid inputs to verify error handling")
+        suggestions.extend([
+            "Test the happy path with valid inputs",
+            "Test edge cases (e.g., empty strings, zero, None)",
+            "Test with invalid inputs to verify error handling"
+        ])
 
-    if "class " in code_lower:
-        suggestions.append("Test class initialization")
-        suggestions.append("Test public methods")
-        suggestions.append("Test method interactions")
-
+    # Control flow suggestions
     if "if " in code_lower or "elif " in code_lower:
-        suggestions.append("Test all conditional branches")
+        suggestions.append("Ensure all conditional branches are tested")
 
+    # Loop suggestions
     if "for " in code_lower or "while " in code_lower:
-        suggestions.append("Test loop behavior with different iteration counts")
-        suggestions.append("Test empty collections or zero iterations")
+        suggestions.append("Test loop behavior (e.g., zero, one, and multiple iterations)")
 
-    if "try:" in code_lower or "except" in code_lower:
-        suggestions.append("Test exception handling paths")
-        suggestions.append("Test successful execution without exceptions")
+    # Exception handling suggestions
+    if "try:" in code_lower and "except" in code_lower:
+        suggestions.extend([
+            "Verify that expected exceptions are raised correctly",
+            "Verify behavior when no exception occurs"
+        ])
 
-    if "return " in code_lower:
-        suggestions.append("Verify return values for different inputs")
+    # Class-based suggestions
+    if "class " in code_lower:
+        suggestions.extend([
+            "Test object initialization",
+            "Test all public methods",
+            "Test method interactions and state changes"
+        ])
 
-    # Add default suggestions if none found
+    # Data structure suggestions
+    if any(keyword in code_lower for keyword in ["list", "dict", "set", "tuple"]):
+        suggestions.append("Test with different data structure sizes and types")
+
+    # Return default suggestions if none found
     if not suggestions:
         suggestions = [
             "Test basic functionality",
-            "Test with edge cases",
+            "Test edge cases",
             "Test error conditions"
         ]
+
+    return suggestions
+
+
+def get_test_coverage_suggestions(code_snippet: str) -> Dict[str, List[str]]:
+    """
+    Analyze code and provide comprehensive test coverage suggestions.
+
+    Args:
+        code_snippet: Code to analyze
+
+    Returns:
+        Dictionary categorizing different types of test suggestions
+    """
+    if not code_snippet or not code_snippet.strip():
+        return {"error": ["No code provided for analysis"]}
+
+    suggestions = {
+        "unit_tests": generate_test_suggestions(code_snippet),
+        "integration_tests": [],
+        "edge_cases": [],
+        "performance_tests": []
+    }
+
+    code_lower = code_snippet.lower()
+
+    # Integration test suggestions
+    if any(keyword in code_lower for keyword in ["import", "from", "api", "database", "http"]):
+        suggestions["integration_tests"].extend([
+            "Test external API interactions",
+            "Test database operations if applicable",
+            "Test module integration"
+        ])
+
+    # Edge case suggestions
+    suggestions["edge_cases"].extend([
+        "Test with None values",
+        "Test with empty collections",
+        "Test with maximum/minimum values",
+        "Test with malformed input"
+    ])
+
+    # Performance test suggestions
+    if any(keyword in code_lower for keyword in ["for", "while", "sort", "search"]):
+        suggestions["performance_tests"].extend([
+            "Test with large datasets",
+            "Test execution time constraints",
+            "Test memory usage"
+        ])
 
     return suggestions

@@ -6,6 +6,7 @@ from typing import List
 import faiss
 import numpy as np
 import json
+from pathlib import Path # <--- ADD THIS
 
 def get_ollama_embeddings(chunks: List[str], model_name: str) -> List[List[float]]:
     """
@@ -29,24 +30,36 @@ def get_ollama_embeddings(chunks: List[str], model_name: str) -> List[List[float
 
     return embeddings
 
-def search_index(query_text: str, model_name: str, index_path: str, map_path: str, k: int = 10):
+def search_index(
+    query_text: str,
+    model_name: str,
+    repo_id: str, # <--- MODIFIED: Take repo_id directly
+    k: int = 10,
+    **kwargs # <--- MODIFIED: Accept and ignore old path args for compatibility
+) -> List[dict]:
     """
-    Searches the Faiss index for the top k most similar chunks to a query.
+    Searches the Faiss index for the top k most similar chunks to a query for a given repo_id.
 
     Args:
         query_text: The user's search query.
         model_name: The name of the Ollama model used to create the index.
-        index_path: Path to the .index file.
-        map_path: Path to the _id_map.json file.
+        repo_id: The unique ID of the repository whose index should be searched.
         k: The number of results to return.
 
     Returns:
         A list of dictionaries, where each dictionary contains the chunk_id,
         file_path, and the original text of the matching chunk.
     """
+    # --- THIS IS THE FIX ---
+    # Centralize path construction based on repo_id.
+    backend_dir = Path(__file__).resolve().parent.parent.parent
+    artifacts_dir = backend_dir / "cloned_repositories" / repo_id
+    index_path = artifacts_dir / f"{repo_id}_faiss.index"
+    map_path = artifacts_dir / f"{repo_id}_id_map.json"
+
     print(f"Loading index '{index_path}' and map '{map_path}'...")
     # Load the Faiss index
-    index = faiss.read_index(index_path)
+    index = faiss.read_index(str(index_path))
 
     # Load the ID mapping files
     with open(map_path, 'r', encoding='utf-8') as f:
@@ -66,7 +79,7 @@ def search_index(query_text: str, model_name: str, index_path: str, map_path: st
 
     # 3. Retrieve the results
     results = []
-    for i in range(k):
+    for i in range(min(k, len(indices[0]))): # Ensure we don't go out of bounds
         faiss_id = indices[0][i]
         chunk_id = faiss_id_to_chunk_id[faiss_id]
         chunk_data = chunk_id_to_data[chunk_id]

@@ -6,17 +6,22 @@ from .views import (
     DocstringGenerationView, PrepareReviewView, ExecuteReviewView,
     ProfileReviewView, AmbassadorDispatchView, IssueListView,
     StrategistPrioritizeView, FileContentView, DiplomatView,
-    CrucibleValidateView, ListModelsView,
-    # --- NEW IMPORT ---
-    HealthCheckView,
+    CrucibleValidateView, ListModelsView, HealthCheckView,
+    IngestRepositoryView, GraphDataView,
 )
 
 urlpatterns = [
-    # --- NEW HEALTH CHECK ENDPOINT ---
+    # --- HEALTH CHECK ENDPOINT ---
     path('health/', HealthCheckView.as_view(), name='health_check'),
 
     # --- MODEL MANAGEMENT ENDPOINT ---
     path('models/list/', ListModelsView.as_view(), name='list_models'),
+
+     # --- INGESTION ENDPOINT ---
+    path('ingest/', IngestRepositoryView.as_view(), name='ingest_repository'),
+
+    # --- Graph ENDPOINT ---
+    path('graph/', GraphDataView.as_view(), name='graph_data'),
 
     # --- "Triage & Strategy" ENDPOINTS ---
     path('issues/list/', IssueListView.as_view(), name='list_issues'),

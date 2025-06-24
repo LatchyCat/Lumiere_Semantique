@@ -19,27 +19,34 @@ MAX_FILE_SIZE_KB=256 # Lowered to avoid unexpectedly large config/data files
 # Directories to exclude from the scan.
 # Used for both 'find' and 'tree' commands.
 EXCLUDE_DIRS=(
+    # --- THE NEW ADDITION ---
+    "cloned_repositories" # Excludes all ingested repository artifacts.
+    "vendor"              # <--- ADDED: Excludes vendor directories, such as from tree-sitter.
+
+    # --- Standard Exclusions ---
     "node_modules"
     ".venv"
     "venv"
     "env"
-    "venv_broken"   # <-- The crucial fix for your issue
+    "venv_broken"
     ".git"
     "__pycache__"
     ".pytest_cache"
     "dist"
-    "build"
+    "build"               # This already handles your `backend/build` folder
     "target"
     "instance"
     "uploads"
     "unprocessed"
+    "*.egg-info" # Added for Python package metadata
+
     # --- AI/ML Specific Directory Exclusions ---
-    "data"          # Often contains large datasets, embeddings, etc.
-    "embeddings"    # A common name for storing embedding files.
-    "models"        # Exclude downloaded model weights and configs.
-    "faiss_index"   # Exclude FAISS index directories.
-    "chroma_db"     # Exclude ChromaDB persistent storage.
-    ".chroma"       # Another common name for ChromaDB storage.
+    "data"
+    "embeddings"
+    "models"
+    "faiss_index"
+    "chroma_db"
+    ".chroma"
 )
 
 # Specific file names to exclude.
@@ -58,7 +65,7 @@ EXCLUDE_FILES=(
 EXCLUDE_EXTENSIONS=(
     "pyc"
     "db"
-    "sqlite3" # Excluded by default, good for keeping.
+    "sqlite3"
     "lockb"
     "tsbuildinfo"
     "svg"
@@ -67,21 +74,20 @@ EXCLUDE_EXTENSIONS=(
     "png"
     "gif"
     "ico"
-    "bin"           # Often used for model weights or binary data.
+    "bin"
     "log"
     "zip"
     "tar"
     "gz"
     "pdf"
     # --- AI/ML Specific Extension Exclusions ---
-    # "json"        # Be careful. Only use if you have no small, important JSONs.
-    "jsonl"         # JSON Lines format, common for datasets.
-    "pkl"           # Python pickle files, often for data or models.
-    "parquet"       # Common data storage format.
-    "h5"            # HDF5 format, used by TensorFlow/Keras.
-    "safetensors"   # Common format for storing model weights.
-    "index"         # Generic name for index files (e.g., from LlamaIndex).
-    "faiss"         # FAISS index files.
+    "jsonl"
+    "pkl"
+    "parquet"
+    "h5"
+    "safetensors"
+    "index"
+    "faiss"
 )
 
 # --- End of Configuration ---

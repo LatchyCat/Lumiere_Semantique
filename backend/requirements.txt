@@ -17,16 +17,19 @@ beautifulsoup4
 # GitHub API Client
 PyGithub
 
-# --- For loading .env files ---
+# --- loading .env files ---
 python-dotenv
 
-# --- NEW: For the Conductor CLI ---
+# --- The Conductor CLI ---
 typer[all]
 rich
 prompt-toolkit
 
-# --- NEW: For The Crucible service ---
+# --- The Crucible service ---
 docker
 
-# --- NEW: For Google Gemini API ---
+# --- Google Gemini API ---
 google-generativeai
+
+#  --- The Polyglot Cartographer ---
+tree_sitter==0.20.1

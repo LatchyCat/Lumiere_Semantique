@@ -62,7 +62,15 @@ Now, provide ONLY the search query string. Do not include any of your own commen
         issues = g.search_issues(query=qualified_query, order="desc")
         print(f"✓ Found {issues.totalCount} potential matches. Analyzing the top 5...")
 
+        # --- FIX: Check if there are any results before trying to iterate ---
+        if issues.totalCount == 0:
+            return {
+                "summary": "The Diplomat was unable to find relevant, solved issues on GitHub for this specific problem.",
+                "evidence": []
+            }
+
         evidence = []
+        # We can now safely iterate over the slice
         for issue in issues[:5]:
             print(f"   -> Analyzing: {issue.html_url}")
             closing_pr = _get_pr_for_issue(issue)
@@ -77,7 +85,7 @@ Now, provide ONLY the search query string. Do not include any of your own commen
 
         if not evidence:
             return {
-                "summary": "The Diplomat was unable to find relevant, solved issues on GitHub for this specific problem.",
+                "summary": "The Diplomat found some potentially related issues, but none had a clear linked Pull Request to analyze for a solution.",
                 "evidence": []
             }
 
