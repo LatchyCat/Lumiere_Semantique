@@ -2,8 +2,9 @@
 
 import json
 import re
+import traceback
 from pathlib import Path
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, List, Any, Tuple
 
 from . import llm_service
 from .utils import clean_llm_code_output
@@ -11,384 +12,111 @@ from . import code_surgery
 
 # Language-specific configurations
 LANGUAGE_CONFIG = {
-    '.py': {
-        'name': 'Python',
-        'function_keywords': ['def ', 'async def ', 'class '],
-        'comment_style': '#',
-        'example_format': '''{{
-  "calculator.py": {{
-    "subtract": "def subtract(a, b):\\n    # This is the corrected implementation\\n    return a - b"
-  }}
-}}'''
-    },
-    '.js': {
-        'name': 'JavaScript',
-        'function_keywords': ['function ', 'const ', 'let ', 'var ', '=>', 'class '],
-        'comment_style': '//',
-        'example_format': '''{{
-  "utils.js": {{
-    "calculateTotal": "function calculateTotal(items) {{\\n  // New implementation\\n  return items.reduce((acc, item) => acc + item.price, 0);\\n}}"
-  }}
-}}'''
-    },
-    '.ts': {
-        'name': 'TypeScript',
-        'function_keywords': ['function ', 'const ', 'let ', 'var ', '=>', 'class ', 'interface ', 'type '],
-        'comment_style': '//',
-        'example_format': '''{{
-  "utils.ts": {{
-    "calculateTotal": "function calculateTotal(items: Item[]): number {{\\n  // New implementation\\n  return items.reduce((acc, item) => acc + item.price, 0);\\n}}"
-  }}
-}}'''
-    },
-    '.gs': {
-        'name': 'Google Apps Script',
-        'function_keywords': ['function ', 'const ', 'let ', 'var ', '=>', 'class '],
-        'comment_style': '//',
-        'example_format': '''{{
-  "dailySync.gs": {{
-    "dailySync": "function dailySync() {{\\n  console.log('🔄 Starting daily sync...');\\n  // Improved implementation\\n  try {{\\n    // Your logic here\\n  }} catch (error) {{\\n    console.error('❌ Sync failed:', error);\\n  }}\\n}}"
-  }}
-}}'''
-    },
-    '.java': {
-        'name': 'Java',
-        'function_keywords': ['public ', 'private ', 'protected ', 'static ', 'class ', 'interface '],
-        'comment_style': '//',
-        'example_format': '''{{
-  "Calculator.java": {{
-    "subtract": "public int subtract(int a, int b) {{\\n    // This is the corrected implementation\\n    return a - b;\\n}}"
-  }}
-}}'''
-    },
-    '.cpp': {
-        'name': 'C++',
-        'function_keywords': ['int ', 'void ', 'double ', 'float ', 'char ', 'bool ', 'class ', 'struct '],
-        'comment_style': '//',
-        'example_format': '''{{
-  "calculator.cpp": {{
-    "subtract": "int subtract(int a, int b) {{\\n    // This is the corrected implementation\\n    return a - b;\\n}}"
-  }}
-}}'''
-    },
-    '.c': {
-        'name': 'C',
-        'function_keywords': ['int ', 'void ', 'double ', 'float ', 'char ', 'struct '],
-        'comment_style': '//',
-        'example_format': '''{{
-  "calculator.c": {{
-    "subtract": "int subtract(int a, int b) {{\\n    /* This is the corrected implementation */\\n    return a - b;\\n}}"
-  }}
-}}'''
-    },
-    '.go': {
-        'name': 'Go',
-        'function_keywords': ['func ', 'type ', 'var ', 'const '],
-        'comment_style': '//',
-        'example_format': '''{{
-  "calculator.go": {{
-    "Subtract": "func Subtract(a, b int) int {{\\n    // This is the corrected implementation\\n    return a - b\\n}}"
-  }}
-}}'''
-    },
-    '.rb': {
-        'name': 'Ruby',
-        'function_keywords': ['def ', 'class ', 'module '],
-        'comment_style': '#',
-        'example_format': '''{{
-  "calculator.rb": {{
-    "subtract": "def subtract(a, b)\\n  # This is the corrected implementation\\n  a - b\\nend"
-  }}
-}}'''
-    },
-    '.php': {
-        'name': 'PHP',
-        'function_keywords': ['function ', 'class ', 'public ', 'private ', 'protected '],
-        'comment_style': '//',
-        'example_format': '''{{
-  "calculator.php": {{
-    "subtract": "function subtract($a, $b) {{\\n    // This is the corrected implementation\\n    return $a - $b;\\n}}"
-  }}
-}}'''
-    }
+    '.py': { 'name': 'Python' },
+    '.js': { 'name': 'JavaScript' },
+    '.ts': { 'name': 'TypeScript' },
+    '.gs': { 'name': 'Google Apps Script' },
+    '.java': { 'name': 'Java' },
+    '.cpp': { 'name': 'C++' },
+    '.c': { 'name': 'C' },
+    '.go': { 'name': 'Go' },
+    '.rb': { 'name': 'Ruby' },
+    '.php': { 'name': 'PHP' },
+    '.rs': { 'name': 'Rust' },
 }
 
 def _get_language_config(file_path: str) -> Dict[str, Any]:
-    """Get language configuration based on file extension."""
     ext = Path(file_path).suffix.lower()
-    return LANGUAGE_CONFIG.get(ext, {
-        'name': 'Unknown',
-        'function_keywords': ['function ', 'def ', 'class '],
-        'comment_style': '//',
-        'example_format': '''{{
-  "example.txt": {{
-    "functionName": "// Language-specific implementation\\nfunction example() {{ return true; }}"
-  }}
-}}'''
-    })
+    return LANGUAGE_CONFIG.get(ext, {'name': 'Unknown'})
 
 def _detect_primary_language(target_files: List[str]) -> Dict[str, Any]:
-    """Detect the primary language from target files."""
     if not target_files:
         return _get_language_config('')
-
-    # Count file extensions
-    ext_counts = {}
-    for file_path in target_files:
-        ext = Path(file_path).suffix.lower()
-        ext_counts[ext] = ext_counts.get(ext, 0) + 1
-
-    # Get most common extension
-    primary_ext = max(ext_counts, key=ext_counts.get) if ext_counts else ''
-    return _get_language_config(primary_ext)
-
-def _is_valid_json(json_str: str) -> bool:
-    """Helper function to validate JSON strings."""
     try:
-        parsed = json.loads(json_str)
-        return isinstance(parsed, dict) and len(parsed) > 0
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return False
+        ext_counts = {}
+        for fp in target_files:
+            ext = Path(fp).suffix.lower()
+            ext_counts[ext] = ext_counts.get(ext, 0) + 1
+        primary_ext = max(ext_counts, key=ext_counts.get)
+        return _get_language_config(primary_ext)
+    except (ValueError, IndexError):
+        return _get_language_config('')
 
 
 def _extract_json_from_llm(raw_text: str) -> Optional[str]:
-    """
-    Ultra-robust JSON extraction from LLM responses.
-    Enhanced to handle multiple languages and coding patterns.
-    """
-
-    # Clean the input text
-    raw_text = raw_text.strip()
-
-    # Strategy 1: Try Markdown JSON code block with comprehensive patterns
-    markdown_patterns = [
-        r"```(?:json|JSON)?\s*(\{.*?\})\s*```",      # Standard markdown
-        r"```(?:json|JSON)?\n(\{.*?\})\n```",        # With newlines
-        r"```(\{.*?\})```",                          # Simple fences
-        r"`(\{.*?\})`",                              # Single backticks
-        r"```(?:json|JSON)?\s*(\{.*?)\s*```",        # Incomplete end brace
-        r"(?i)```json\s*(\{.*?\})\s*```",            # Case insensitive
-    ]
-
-    for pattern in markdown_patterns:
-        matches = re.finditer(pattern, raw_text, re.DOTALL | re.IGNORECASE)
-        for match in matches:
-            json_candidate = match.group(1).strip()
-            if _is_valid_json(json_candidate):
-                return json_candidate
-
-    # Strategy 2: Enhanced bracket counting with multiple attempts
-    json_candidates = []
-    stack = []
-    start_indices = []
-
-    for i, char in enumerate(raw_text):
-        if char == '{':
-            if not stack:
-                start_indices.append(i)
-            stack.append('{')
-        elif char == '}':
-            if stack:
-                stack.pop()
-                if not stack and start_indices:
-                    start_index = start_indices.pop()
-                    json_candidate = raw_text[start_index:i+1]
-                    json_candidates.append(json_candidate)
-
-    # Test all candidates from bracket counting
-    for candidate in json_candidates:
-        if _is_valid_json(candidate):
-            return candidate
-
-    # Strategy 3: Look for file path patterns (enhanced for multiple languages)
-    # Updated to include .gs files and other languages
-    file_extensions = '|'.join([
-        'py', 'js', 'ts', 'gs', 'java', 'cpp', 'c', 'h', 'html', 'css',
-        'json', 'yaml', 'yml', 'xml', 'md', 'txt', 'go', 'rb', 'php',
-        'swift', 'kt', 'dart', 'rs', 'scala', 'sql', 'sh', 'bat'
-    ])
-
-    file_patterns = [
-        rf'\{{[^{{}}]*?"[^"]*\.(?:{file_extensions})"[^{{}}]*?:.*?\}}',
-        rf'\{{.*?"[^"]*/"[^"]*\.(?:{file_extensions})".*?:.*?\}}',
-        rf'\{{.*?["\'][^"\']*\.(?:{file_extensions})["\'].*?:.*?\}}',
-    ]
-
-    for pattern in file_patterns:
-        matches = re.finditer(pattern, raw_text, re.DOTALL)
-        for match in matches:
-            json_candidate = match.group(0)
-            if _is_valid_json(json_candidate):
-                return json_candidate
-
-    # Strategy 4: Try to extract from common LLM response patterns
-    response_patterns = [
-        r'(?:Here(?:\'s|s| is)? (?:the )?(?:JSON|json|response|fix|solution|code)?:?\s*)(\{.*?\})',
-        r'(?:Response|Answer|Solution|Fix):\s*(\{.*?\})',
-        rf'(\{{[^{{}}]*?["\'][^"\']*\.(?:{file_extensions})["\'][^{{}}]*?:.*?\}})',
-    ]
-
-    for pattern in response_patterns:
-        matches = re.finditer(pattern, raw_text, re.DOTALL | re.IGNORECASE)
-        for match in matches:
-            json_candidate = match.group(1).strip()
-            if _is_valid_json(json_candidate):
-                return json_candidate
-
-    # Strategy 5: Last resort - try to find ANY valid JSON structure
-    # Look for balanced braces and try to extract
-    brace_positions = []
-    for i, char in enumerate(raw_text):
-        if char in '{}':
-            brace_positions.append((i, char))
-
-    # Try different combinations of brace positions
-    for start_pos in range(len(brace_positions)):
-        if brace_positions[start_pos][1] == '{':
-            brace_count = 0
-            for end_pos in range(start_pos, len(brace_positions)):
-                if brace_positions[end_pos][1] == '{':
-                    brace_count += 1
-                elif brace_positions[end_pos][1] == '}':
-                    brace_count -= 1
-                    if brace_count == 0:
-                        start_idx = brace_positions[start_pos][0]
-                        end_idx = brace_positions[end_pos][0] + 1
-                        json_candidate = raw_text[start_idx:end_idx]
-                        if _is_valid_json(json_candidate):
-                            return json_candidate
-                        break
-
-    return None
-
-
-def _sanitize_json_response(json_str: str) -> str:
-    """
-    Comprehensive JSON sanitization to fix common LLM formatting issues.
-    Enhanced for multiple programming languages.
-    """
-    # Remove common prefixes/suffixes that LLMs add
-    prefixes_to_remove = [
-        "Here's the JSON response:",
-        "Here is the JSON:",
-        "Here's the JSON:",
-        "The JSON object is:",
-        "Response:",
-        "Here's the fix:",
-        "Solution:",
-        "The fix is:",
-        "Here's your fix:",
-        "JSON:",
-        "```json",
-        "```",
-        "Answer:",
-        "Result:",
-        "Here's the updated code:",
-        "Here's the corrected implementation:",
-    ]
-
-    suffixes_to_remove = [
-        "Let me know if you need any clarification!",
-        "This should fix the issue.",
-        "Hope this helps!",
-        "```",
-        "Let me know if you have any questions.",
-        "Please let me know if you need any modifications.",
-        "This addresses the issue mentioned in the RCA report.",
-        "The code is now language-agnostic.",
-        "This should work for your specific language.",
-    ]
-
-    cleaned = json_str.strip()
-
-    # Remove prefixes (case insensitive)
-    for prefix in prefixes_to_remove:
-        if cleaned.lower().startswith(prefix.lower()):
-            cleaned = cleaned[len(prefix):].strip()
-            break  # Only remove one prefix
-
-    # Remove suffixes (case insensitive)
-    for suffix in suffixes_to_remove:
-        if cleaned.lower().endswith(suffix.lower()):
-            cleaned = cleaned[:-len(suffix)].strip()
-            break  # Only remove one suffix
-
-    # Fix common JSON syntax issues
-    # Replace smart quotes with regular quotes
-    cleaned = cleaned.replace('"', '"').replace('"', '"')
-    cleaned = cleaned.replace(''', "'").replace(''', "'")
-
-    # Replace backticks that might be used as quotes
-    cleaned = cleaned.replace('`', '"')
-
-    # Fix trailing commas (common LLM mistake)
-    cleaned = re.sub(r',(\s*[}\]])', r'\1', cleaned)
-
-    # Fix missing commas between objects/arrays
-    cleaned = re.sub(r'}\s*{', '},{', cleaned)
-    cleaned = re.sub(r']\s*\[', '],[', cleaned)
-
-    # Fix unescaped quotes in strings (basic attempt)
-    # This is tricky, so we'll just try to fix obvious cases
-    cleaned = re.sub(r'([^\\])"([^",:}\]]*)"([^",:}\]]*)"', r'\1"\2\"\3"', cleaned)
-
-    # Fix common spacing issues
-    cleaned = re.sub(r'\s*:\s*', ':', cleaned)
-    cleaned = re.sub(r'\s*,\s*', ',', cleaned)
-
-    # Remove any remaining markdown code block indicators
-    cleaned = re.sub(r'^```[a-zA-Z]*\s*', '', cleaned)
-    cleaned = re.sub(r'\s*```$', '', cleaned)
-
-    return cleaned
-
-
-def _attempt_json_repair(raw_text: str) -> Optional[str]:
-    """
-    Last resort JSON repair for severely malformed responses.
-    Enhanced to handle multiple programming languages including .gs files.
-    """
+    match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', raw_text, re.DOTALL)
+    if match:
+        return match.group(1)
     try:
-        # Enhanced file pattern to include more extensions
-        file_extensions = '|'.join([
-            'py', 'js', 'ts', 'gs', 'java', 'cpp', 'c', 'h', 'html', 'css',
-            'json', 'yaml', 'yml', 'xml', 'md', 'txt', 'go', 'rb', 'php',
-            'swift', 'kt', 'dart', 'rs', 'scala', 'sql', 'sh', 'bat'
-        ])
+        start = raw_text.index('[')
+        end = raw_text.rindex(']') + 1
+        return raw_text[start:end]
+    except ValueError:
+        return None
 
-        file_pattern = rf'["\']([^"\']*\.(?:{file_extensions}))["\']'
-        files_found = re.findall(file_pattern, raw_text)
+def _validate_and_parse_surgical_plan(json_str: str) -> Tuple[Optional[List[Dict]], str]:
+    if not json_str:
+        return None, "AI response was empty or did not contain a JSON object."
+    try:
+        plan = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        return None, f"AI response was not valid JSON. Parser error: {e}"
 
-        if not files_found:
-            return None
+    if not isinstance(plan, list):
+        return None, f"AI response was not a list of operations. Found type: {type(plan).__name__}."
 
-        # Try to build a JSON structure
-        result = {}
+    for i, op in enumerate(plan):
+        op_num = i + 1
+        if not isinstance(op, dict):
+            return None, f"Operation #{op_num} is not a valid object."
 
-        # Simple pattern matching for file content
-        for file_path in files_found:
-            # Look for content after the file path
-            content_patterns = [
-                rf'["\']({re.escape(file_path)})["\']:\s*["\']([^"\']*?)["\']',
-                rf'["\']({re.escape(file_path)})["\']:\s*"""([^"]*?)"""',
-                rf'["\']({re.escape(file_path)})["\']:\s*```([^`]*?)```',
-                # Enhanced patterns for function definitions
-                rf'["\']({re.escape(file_path)})["\']:\s*{{([^{{}}]*?)}}',
-            ]
+        operation_type = op.get("operation")
+        if not operation_type:
+            return None, f"Operation #{op_num} is missing the required 'operation' field."
 
-            for pattern in content_patterns:
-                match = re.search(pattern, raw_text, re.DOTALL)
-                if match:
-                    result[file_path] = match.group(2).strip()
-                    break
+        required_fields = {
+            "REPLACE_BLOCK": ["file_path", "target_identifier", "content"],
+            "ADD_FIELD_TO_STRUCT": ["file_path", "target_identifier", "content"],
+            "CREATE_FILE": ["file_path", "content"],
+            "INSERT_CODE_AT": ["file_path", "line_number", "content"],
+        }
+        if operation_type not in required_fields:
+            return None, f"Operation #{op_num} has an unknown operation type: '{operation_type}'."
 
-        if result:
-            return json.dumps(result)
+        missing = [field for field in required_fields[operation_type] if field not in op]
+        if missing:
+            return None, f"Operation #{op_num} ('{operation_type}') is missing required fields: {', '.join(missing)}."
 
-    except Exception:
-        pass
+    return plan, ""
 
-    return None
+def _scout_expand_scope(
+    original_contents: Dict[str, str],
+    surgical_plan: List[Dict],
+    full_file_map: Dict[str, str]
+) -> Dict[str, str]:
+    """
+    The Scout Service.
+    Ensures the file scope matches the AI's plan by loading any missing files.
+    """
+    print("🛰️  Activating Scout: Verifying and expanding file scope...")
+
+    plan_files = {op['file_path'] for op in surgical_plan if 'file_path' in op}
+
+    updated_contents = original_contents.copy()
+    expanded_files_loaded = 0
+
+    for file_path in plan_files:
+        if file_path not in updated_contents:
+            updated_contents[file_path] = full_file_map.get(file_path, "")
+            print(f"  → Scout expanded scope to include: {file_path}")
+            expanded_files_loaded += 1
+
+    if expanded_files_loaded > 0:
+        print(f"✓ Scout successfully expanded scope with {expanded_files_loaded} new file(s).")
+    else:
+        print("✓ File scope is consistent with the AI's plan.")
+
+    return updated_contents
 
 
 def generate_scaffold(
@@ -400,11 +128,7 @@ def generate_scaffold(
     refinement_history: Optional[List[Dict[str, str]]] = None
 ) -> Dict[str, Any]:
     """
-    Core logic for Code Scaffolding using the new "Surgical" Two-Step method.
-    Now fully language-agnostic with support for .gs files and multiple languages.
-
-    Returns:
-        Dict containing either success data or error information
+    Core logic for Code Scaffolding with Dynamic Scope Expansion.
     """
     print(f"🔧 Initiating Surgical Scaffolding for {target_files} in repo '{repo_id}'")
 
@@ -412,209 +136,145 @@ def generate_scaffold(
         # --- SETUP AND VALIDATION ---
         backend_dir = Path(__file__).resolve().parent.parent.parent
         cortex_path = backend_dir / "cloned_repositories" / repo_id / f"{repo_id}_cortex.json"
-
         if not cortex_path.exists():
-            return {
-                "error": "Cortex file not found",
-                "details": f"Expected path: {cortex_path}"
-            }
+            return {"error": "Cortex file not found", "details": f"Expected path: {cortex_path}"}
 
-        # Load cortex data
-        try:
-            with open(cortex_path, 'r', encoding='utf-8') as f:
-                cortex_data = json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
-            return {
-                "error": "Failed to load cortex file",
-                "details": str(e)
-            }
+        with open(cortex_path, 'r', encoding='utf-8') as f:
+            cortex_data = json.load(f)
 
-        # Build file map and validate target files
         file_map = {file['file_path']: file['raw_content'] for file in cortex_data.get('files', [])}
-        original_contents = {}
-        missing_files = []
+        original_contents = {fp: file_map.get(fp, "") for fp in target_files}
 
-        for fp in target_files:
-            if fp in file_map and file_map[fp]:
-                original_contents[fp] = file_map[fp]
-            else:
-                missing_files.append(fp)
-
-        if missing_files:
-            return {
-                "error": "Some target files not found in cortex",
-                "missing_files": missing_files,
-                "available_files": list(file_map.keys())
-            }
-
-        if not original_contents:
-            return {
-                "error": "No valid target files found",
-                "target_files": target_files
-            }
-
-        print(f"✓ Loaded {len(original_contents)} target files")
-
-        # Detect primary language for better prompt generation
+        print(f"✓ Loaded {len(target_files)} initial target files.")
         language_config = _detect_primary_language(target_files)
         print(f"📝 Detected primary language: {language_config['name']}")
 
-        # --- STEP 1: GENERATE THE SNIPPETS ---
-        print("📝 Step 1: Generating function snippets...")
+        # --- STEP 1: GENERATE THE SURGICAL PLAN ---
+        print("📝 Step 1: Generating surgical plan...")
 
-        # Build relevant code section with language awareness
         file_content_prompt_section = "\n\n### RELEVANT EXISTING CODE\n"
         for path, content in original_contents.items():
-            # Get language-specific compressed content
-            compressed_content = code_surgery.get_relevant_code_from_cortex(content, rca_report)
-            file_content_prompt_section += f"<file path=\"{path}\">\n{compressed_content}\n</file>\n\n"
+            if content:
+                compressed_content = code_surgery.get_relevant_code_from_cortex(content, rca_report, path)
+                file_content_prompt_section += f"<file path=\"{path}\">\n{compressed_content}\n</file>\n\n"
 
-        # Build refinement context
         refinement_context = ""
         if refinement_history:
             refinement_context = "\n\n### PREVIOUS REFINEMENT ATTEMPTS\n"
-            for i, refinement in enumerate(refinement_history[-3:]):  # Last 3 attempts
+            for i, refinement in enumerate(refinement_history[-2:]):
                 feedback = refinement.get("feedback", "No feedback provided.")
                 refinement_context += f"Attempt {i+1} Feedback: {feedback}\n"
-            refinement_context += "\nPlease learn from the previous feedback and generate a better fix.\n"
+            refinement_context += "\nPlease learn from the previous feedback and generate a better plan.\n"
 
-        # Enhanced language-agnostic prompt
-        snippet_prompt = f"""You are a code generation expert specializing in {language_config['name']} and multi-language codebases.
-
-<Instructions>
-1. Read the <Goal> and <RCA_Report> carefully.
-2. Based on the <RELEVANT_EXISTING_CODE>, identify and rewrite ONLY the functions/methods that need to be changed to fix the bug.
-3. Your response MUST be a single, valid JSON object with no additional text or explanations.
-4. The keys of the JSON object MUST be the full file paths (e.g., "calculator.py", "utils.js", "dailySync.gs").
-5. The values MUST be JSON objects where keys are function/method names and values are the complete, new code for JUST THAT FUNCTION/METHOD.
-6. Preserve existing function signatures unless the bug requires changing them.
-7. Ensure all functions are syntactically correct and complete for their respective programming language.
-8. For Google Apps Script (.gs) files, maintain proper JavaScript syntax and Google Apps Script conventions.
-9. Pay attention to language-specific syntax, indentation, and conventions.
-10. Include proper error handling and logging where appropriate for the language.
-</Instructions>
-
-<Language_Specific_Notes>
-- Primary Language: {language_config['name']}
-- Comment Style: {language_config['comment_style']}
-- Common Function Keywords: {', '.join(language_config['function_keywords'])}
-</Language_Specific_Notes>
-
-<Example_Response_Format>
-{language_config['example_format']}
-</Example_Response_Format>
+        surgical_prompt = f"""You are an expert software architect specializing in {language_config['name']}. Your task is to generate a precise surgical plan to fix a bug.
 
 <Goal>{instruction}</Goal>
-
 <RCA_Report>{rca_report}</RCA_Report>
 {refinement_context}
 {file_content_prompt_section}
 
-Generate the JSON object containing only the modified function snippets now:"""
+### YOUR TASK ###
+Based on all the provided information, create a step-by-step surgical plan as a JSON array.
 
-        # Generate snippets with enhanced retry logic
+### AVAILABLE OPERATIONS ###
+You can use the following operations in your plan:
+1.  `"operation": "CREATE_FILE"`: Creates a new file.
+    - Required fields: `file_path`, `content`.
+2.  `"operation": "REPLACE_BLOCK"`: Replaces an entire function, method, class, or other code block.
+    - Required fields: `file_path`, `target_identifier` (the unique name/signature of the block to replace), `content`.
+3.  `"operation": "ADD_FIELD_TO_STRUCT"`: (For Rust/C/Go) Adds a new field to a struct.
+    - Required fields: `file_path`, `target_identifier` (the name of the struct), `content` (the line(s) for the new field).
+
+### RESPONSE FORMAT ###
+- You MUST respond with ONLY a valid JSON array `[...]`.
+- Do not include any explanations, markdown fences, or other text.
+- If the AI needs to modify a file not in the provided context, it should add an operation for that file. The tool will handle loading it.
+
+<Example_Response_Format>
+```json
+[
+  {{
+    "operation": "ADD_FIELD_TO_STRUCT",
+    "file_path": "src/config/mod.rs",
+    "target_identifier": "ConfigFile",
+    "content": "    pub autoplay: bool,"
+  }},
+  {{
+    "operation": "REPLACE_BLOCK",
+    "file_path": "src/player.rs",
+    "target_identifier": "play_next_song",
+    "content": "pub fn play_next_song(config: &Config) {{\\n    if config.autoplay {{\\n        // new logic here...\\n    }}\\n}}"
+  }}
+]
+</Example_Response_Format>
+Generate the surgical plan now.
+"""
         max_retries = 3
-        changed_snippets_data = None
+        surgical_plan = None
         last_llm_response = ""
 
         for attempt in range(max_retries):
-            print(f"  🤖 Attempt {attempt + 1}: Calling LLM for {language_config['name']}...")
-            llm_response = llm_service.generate_text(snippet_prompt, model_identifier)
+            print(f"  🤖 Attempt {attempt + 1}: Calling LLM for surgical plan...")
+            llm_response = llm_service.generate_text(surgical_prompt, model_identifier)
             last_llm_response = llm_response
 
             if not llm_response or not llm_response.strip():
-                if attempt < max_retries - 1:
-                    print("  ⚠️ Empty response, retrying...")
-                    continue
-                else:
-                    return {"error": "LLM returned empty response", "attempts": max_retries}
+                print("  ⚠️ Empty response, retrying...")
+                continue
 
-            # Enhanced JSON extraction and validation
             json_str = _extract_json_from_llm(llm_response)
-            if not json_str:
-                # Try sanitization first
-                sanitized = _sanitize_json_response(llm_response)
-                json_str = _extract_json_from_llm(sanitized)
-
-            if not json_str:
-                json_str = _attempt_json_repair(llm_response)
-
             if json_str:
-                parsed_data, error_msg = code_surgery.validate_and_parse_snippets(json_str)
-                if parsed_data:
-                    changed_snippets_data = parsed_data
-                    print(f"  ✓ Successfully parsed {len(changed_snippets_data)} file(s) with snippets.")
+                plan, error_msg = _validate_and_parse_surgical_plan(json_str)
+                if plan:
+                    surgical_plan = plan
+                    print(f"  ✓ Successfully parsed surgical plan with {len(plan)} operations.")
                     break
                 else:
-                    print(f"  ⚠️ Attempt {attempt + 1} failed validation: {error_msg}")
-                    # Log the JSON for debugging
-                    print(f"  📝 Failed JSON: {json_str[:200]}...")
+                    print(f"  ❌ Blueprint Rejected (Attempt {attempt+1}/{max_retries}): {error_msg}")
+                    print(f"  📝 Faulty JSON received: {json_str[:250]}...")
             else:
-                print(f"  ⚠️ Attempt {attempt + 1} failed: Could not extract JSON from the response.")
-                # Log part of the response for debugging
-                print(f"  📝 LLM Response preview: {llm_response[:200]}...")
+                print(f"  ❌ Could not extract JSON from LLM response (Attempt {attempt+1}/{max_retries}).")
 
-        if not changed_snippets_data:
+        if not surgical_plan:
             return {
-                "error": f"Failed to generate valid snippets after {max_retries} attempts",
+                "error": f"Failed to generate a valid surgical plan after {max_retries} attempts.",
+                "details": "The AI's final proposed plan was malformed or incomplete. Please review the raw response for clues.",
                 "llm_response": last_llm_response,
-                "language_detected": language_config['name']
             }
 
+        # --- The Scout Service is called here ---
+        final_contents_for_surgery = _scout_expand_scope(
+            original_contents,
+            surgical_plan,
+            file_map
+        )
+
         # --- STEP 2: PERFORM THE CODE SURGERY ---
-        print("🔬 Step 2: Performing code surgery...")
+        print("🔬 Step 2: Dispatching plan to Code Surgery agent...")
 
-        final_modified_files = {}
-        surgery_errors = []
+        modified_files, surgery_report = code_surgery.execute_surgical_plan(
+            final_contents_for_surgery,
+            surgical_plan
+        )
 
-        for file_path, snippets in changed_snippets_data.items():
-            if file_path in original_contents:
-                print(f"  🔧 Operating on {file_path} ({_get_language_config(file_path)['name']})...")
-                try:
-                    modified_content = code_surgery.replace_functions_in_file(
-                        original_contents[file_path],
-                        snippets,
-                        file_path # Pass file_path for language-specific logic
-                    )
-                    final_modified_files[file_path] = modified_content
-                    print(f"  ✓ Successfully modified {file_path}")
+        if surgery_report.get("errors"):
+            return {
+                "error": "Code Surgery failed to apply the plan.",
+                "details": surgery_report["errors"]
+            }
 
-                except Exception as e:
-                    error_msg = f"Surgery failed for {file_path}: {str(e)}"
-                    surgery_errors.append(error_msg)
-                    print(f"  ❌ {error_msg}")
-                    # Keep the original content as fallback
-                    final_modified_files[file_path] = original_contents[file_path]
-            else:
-                warning_msg = f"LLM generated snippets for untracked file: {file_path}"
-                surgery_errors.append(warning_msg)
-                print(f"  ⚠️ {warning_msg}")
-
-        # Ensure we have results for all target files
-        for file_path in target_files:
-            if file_path not in final_modified_files:
-                final_modified_files[file_path] = original_contents[file_path]
-
-        result = {
-            "modified_files": final_modified_files,
-            "original_contents": original_contents,
-            "snippets_generated": changed_snippets_data,
-            "files_modified": len(final_modified_files),
-            "functions_targeted": sum(len(snippets) for snippets in changed_snippets_data.values()),
-            "primary_language": language_config['name'],
-            "languages_detected": list(set(_get_language_config(fp)['name'] for fp in target_files))
+        print("🎉 Surgical scaffolding completed successfully!")
+        return {
+            "modified_files": modified_files,
+            "original_contents": final_contents_for_surgery, # Return the expanded set
+            "plan_executed": surgical_plan,
+            "surgery_report": surgery_report,
         }
-
-        if surgery_errors:
-            result["warnings"] = surgery_errors
-
-        print(f"🎉 Surgical scaffolding completed successfully for {language_config['name']} codebase!")
-        return result
 
     except Exception as e:
         print(f"❌ Critical error in generate_scaffold: {str(e)}")
         return {
-            "error": "Critical error in generate_scaffold",
+            "error": "A critical error occurred in the scaffolding service.",
             "details": str(e),
-            "traceback": str(e.__traceback__) if hasattr(e, '__traceback__') else None
+            "traceback": traceback.format_exc(),
         }

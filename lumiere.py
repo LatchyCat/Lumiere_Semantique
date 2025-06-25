@@ -41,7 +41,7 @@ history_path.parent.mkdir(parents=True, exist_ok=True)
 API_BASE_URL = "http://127.0.0.1:8002/api/v1"
 
 # Create command completers for better UX
-main_commands = ['analyze', 'a', 'profile', 'p', 'config', 'c', 'help', 'h', 'exit', 'x', 'quit']
+main_commands = ['analyze', 'a', 'profile', 'p', 'config', 'c', 'help', 'h', 'exit', 'x', 'quit', 'list-repos', 'lr']
 analysis_commands = ['list', 'l', 'fix', 'f', 'briefing', 'b', 'rca', 'r', 'details', 'd', 'graph', 'g', 'help', 'h', 'back', 'exit', 'quit']
 
 main_completer = WordCompleter(main_commands, ignore_case=True)
@@ -67,6 +67,40 @@ cli_state = {
     "last_repo_url": None,
     "debug_mode": False,
 }
+
+# --- NEW UTILITY FUNCTIONS for managing analyzed repos ---
+
+def check_if_repo_is_analyzed(repo_id: str) -> bool:
+    """Checks if a specific repo_id directory has all the necessary analysis files."""
+    cloned_repos_dir = Path("backend/cloned_repositories")
+    repo_dir = cloned_repos_dir / repo_id
+    if not repo_dir.is_dir():
+        return False
+
+    cortex_file = repo_dir / f"{repo_id}_cortex.json"
+    faiss_file = repo_dir / f"{repo_id}_faiss.index"
+    map_file = repo_dir / f"{repo_id}_id_map.json"
+
+    return all([cortex_file.exists(), faiss_file.exists(), map_file.exists()])
+
+def find_analyzed_repos() -> List[Dict[str, str]]:
+    """Scans for previously analyzed repositories and validates their artifacts."""
+    analyzed_repos = []
+    cloned_repos_dir = Path("backend/cloned_repositories")
+    if not cloned_repos_dir.is_dir():
+        return []
+
+    for repo_dir in cloned_repos_dir.iterdir():
+        if repo_dir.is_dir():
+            repo_id = repo_dir.name
+            if check_if_repo_is_analyzed(repo_id):
+                # Attempt to reconstruct a user-friendly name and the full URL
+                display_name = repo_id.replace("_", "/", 1)
+                full_url = f"https://github.com/{display_name}"
+                analyzed_repos.append({"repo_id": repo_id, "display_name": display_name, "url": full_url})
+
+    return sorted(analyzed_repos, key=lambda x: x['repo_id'])
+
 
 def load_config():
     """Load configuration from file if it exists."""
@@ -239,6 +273,13 @@ class LumiereAPIClient:
         return self._request("POST", "generate-docstring/", json={
             "repo_id": repo_id,
             "new_code": code,
+            "instruction": instruction
+        })
+
+    def generate_tests(self, repo_id: str, code_to_test: str, instruction: str):
+        return self._request("POST", "generate-tests/", json={
+            "repo_id": repo_id,
+            "new_code": code_to_test,
             "instruction": instruction
         })
 
@@ -417,17 +458,25 @@ class AnalysisSession:
             status.update("[green]✓ Backend connection established")
             time.sleep(0.5)
 
-        try:
-            do_embed = Confirm.ask(
-                "\n[bold]Do you want to clone and embed this repo for full analysis (briefing, rca, fix)?[/bold]\n"
-                "[dim](This can take a few minutes for large repos. Choose 'N' for issue listing only.)[/dim]",
-                default=True
-            )
-        except KeyboardInterrupt:
-            console.print("\n[yellow]Analysis cancelled.[/yellow]")
-            return False
+        # --- MODIFIED: Check for existing repo before asking to ingest ---
+        is_already_analyzed = check_if_repo_is_analyzed(self.repo_id)
+        do_embed = False  # Default to not embedding
 
-        if do_embed:
+        if is_already_analyzed:
+            console.print(f"\n[bold green]✓ Found existing analyzed repository for '{self.repo_id}'.[/bold green] [dim]Skipping ingestion.[/dim]")
+        else:
+            try:
+                # Set do_embed to True only if user confirms for a new repo
+                do_embed = Confirm.ask(
+                    "\n[bold]Do you want to clone and embed this repo for full analysis (briefing, rca, fix)?[/bold]\n"
+                    "[dim](This can take a few minutes for large repos. Choose 'N' for issue listing only.)[/dim]",
+                    default=True
+                )
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Analysis cancelled.[/yellow]")
+                return False
+
+        if do_embed: # This condition is only met for new repos where the user confirmed.
             with Status("[cyan]🚀 Beginning ingestion...[/cyan]", spinner="earth") as status:
                 status.update("[cyan]Cloning repository and analyzing files...[/cyan]")
                 ingest_result = self.api.ingest_repository(self.repo_url)
@@ -784,7 +833,7 @@ class AnalysisSession:
             self.last_rca_report = None
             self.last_rca_issue_num = None
             console.print("[red]❌ Could not perform root cause analysis.[/red]")
-            
+
 
     def _display_diff(self, original_code: str, new_code: str, filename: str):
         """Display a formatted diff of code changes for a single file."""
@@ -820,14 +869,25 @@ class AnalysisSession:
         ))
 
     def _extract_filenames_from_rca(self, rca_report: str) -> List[str]:
-        """Extracts filenames from markdown code fences or inline backticks."""
-        pattern = r'`([\w./\\-]+)`'
+        """Extracts filenames from markdown code fences, inline backticks, and lists."""
+        # This new, more robust pattern finds filenames:
+        # 1. In backticks: `file.py`
+        # 2. In lists/bullet points: - file.py or * file.py
+        # 3. As standalone words that look like file paths.
+        pattern = r'(?:\s|-|\*|`)([\w./-]+\.(?:py|js|ts|gs|json|md|html|css|yaml|yml|toml|txt))\b'
         matches = re.findall(pattern, rca_report)
+
+        # Also grab any remaining backticked items that the first pass might miss
+        backtick_pattern = r'`([\w./\\-]+)`'
+        matches.extend(re.findall(backtick_pattern, rca_report))
+
+        # Filter and deduplicate
         filenames = sorted(list(set(matches)))
         return [f for f in filenames if '.' in f and f.lower() not in ['true', 'false']]
 
+
     def handle_fix_dialogue(self, issue: Dict):
-        """Handle the complete fix dialogue, now driven by RCA and with documentation step."""
+        """Handle the complete fix dialogue, now driven by RCA and with documentation and automated test generation."""
         console.print(Panel(
             f"[bold cyan]🤝 Socratic Dialogue[/bold cyan] starting for:\n"
             f"[bold green]Issue #{issue['number']}: {issue['title']}[/bold green]",
@@ -864,6 +924,7 @@ class AnalysisSession:
         modified_files = {}
         original_contents = {}
         is_documented = False
+        are_tests_generated = False # <-- NEW STATE
 
         while iteration_count < max_iterations:
             iteration_count += 1
@@ -887,17 +948,18 @@ class AnalysisSession:
                 modified_files = fix_data["modified_files"]
                 original_contents = fix_data["original_contents"]
                 is_documented = False
+                are_tests_generated = False # Reset test state on new code generation
 
             console.rule("[bold]📝 Review Proposed Changes[/bold]")
             for filename, new_code in modified_files.items():
-                self._display_diff(original_contents.get(filename, ""), new_code, filename)
+                # Avoid showing a diff for unchanged files
+                if original_contents.get(filename, "") != new_code:
+                    self._display_diff(original_contents.get(filename, ""), new_code, filename)
 
             all_validations_passed = True
-
-            # Create a list of files that are actually testable (i.e., not docs)
             files_to_validate = [
                 f for f in modified_files.keys()
-                if not f.lower().endswith(('.md', '.txt', '.json', '.toml', '.yaml', '.yml'))
+                if not f.lower().endswith(('.md', '.txt', '.json', '.toml', '.yaml', '.yml', '.ron'))
             ]
 
             if not files_to_validate:
@@ -913,7 +975,6 @@ class AnalysisSession:
                     if not validation_result or validation_result.get("status") != "passed":
                         all_validations_passed = False
                         console.print(Panel(f"❌ [bold red]Validation Failed for {filename}[/bold red]\n[bold]Test Results:[/bold]\n{validation_result.get('logs', 'No logs') if validation_result else 'Crucible service error'}", title=f"[red]🔥 Crucible Report: {filename}[/red]", border_style="red"))
-                        # Immediately stop validation on the first failure
                         break
 
             if all_validations_passed and files_to_validate:
@@ -931,8 +992,12 @@ class AnalysisSession:
                         if not is_documented and any(f.endswith((".py", ".js", ".ts")) for f in modified_files.keys()):
                            action_choices.append('d')
                            prompt_text += "[bold blue](d)[/bold blue] Document the changes\n"
+                        # --- NEW "GENERATE TESTS" OPTION ---
+                        if not are_tests_generated:
+                            action_choices.append('t')
+                            prompt_text += "[bold yellow](t)[/bold yellow] Generate tests for the fix\n"
                     else:
-                        prompt_text += "\n[bold red]❌ Validation failed. Choose action:[/bold]\n"
+                        prompt_text += "\n[bold red]❌ Validation failed. Choose action:[/bold red]\n"
 
                     prompt_text += "[bold yellow](r)[/bold yellow] Refine with feedback\n"
                     prompt_text += "[bold red](c)[/bold red] Cancel"
@@ -967,8 +1032,46 @@ class AnalysisSession:
                     console.print("[green]✓ Documentation complete.[/green]")
                     console.rule("[bold]📝 Review Updated Changes with Documentation[/bold]")
                     for filename, new_code in modified_files.items():
-                        self._display_diff(original_contents.get(filename, ""), new_code, filename)
+                         if original_contents.get(filename, "") != new_code:
+                            self._display_diff(original_contents.get(filename, ""), new_code, filename)
                     continue
+
+                # --- NEW TEST GENERATION HANDLER ---
+                if choice == 't':
+                    if are_tests_generated:
+                        console.print("[yellow]Tests have already been generated for this fix.[/yellow]")
+                        continue
+                    if not all_validations_passed:
+                        console.print("[red]Cannot generate tests for code that has failed validation.[/red]")
+                        continue
+
+                    generated_test_files = {}
+                    with Status("[bold yellow]🔬 Calling Test Generation Agent...[/bold yellow]") as status:
+                        for filename, code in modified_files.items():
+                            # Only generate tests for runnable code, not for tests themselves
+                            if any(filename.endswith(ext) for ext in [".py", ".js", ".ts"]) and 'test' not in filename:
+                                status.update(f"[bold yellow]🔬 Generating tests for {filename}...[/bold yellow]")
+                                test_result = self.api.generate_tests(self.repo_id, code, issue_desc)
+
+                                if test_result and test_result.get("generated_tests"):
+                                    # Heuristic to determine the new test file's path
+                                    test_file_path = f"tests/test_{Path(filename).stem}.py"
+                                    generated_test_files[test_file_path] = test_result["generated_tests"]
+                                    console.print(f"  [green]✓[/green] Generated test file: [cyan]{test_file_path}[/cyan]")
+                                else:
+                                    console.print(f"  [red]✗[/red] Failed to generate tests for [cyan]{filename}[/cyan].")
+
+                    if generated_test_files:
+                        modified_files.update(generated_test_files)
+                        are_tests_generated = True  # Set the flag
+                        console.print("\n[green]✓ Test generation complete.[/green]")
+                        console.rule("[bold]📝 Review New Test Files[/bold]")
+                        for filename, new_code in generated_test_files.items():
+                            self._display_diff("", new_code, filename) # Original is "" for a new file
+                    else:
+                        console.print("[yellow]No new tests were generated.[/yellow]")
+
+                    continue # Go back to the user action menu
 
                 if choice == 'c': break
                 if choice == 'a' and all_validations_passed: break
@@ -1004,6 +1107,11 @@ class AnalysisSession:
                     console.print("[red]❌ Failed to create pull request.[/red]")
                 break
 
+        self.last_rca_report = None
+        self.last_rca_issue_num = None
+
+
+        
 # --- Utility Function for Help Display ---
 def display_interactive_help(context: str = 'main'):
     """Display help instructions based on the current CLI context."""
@@ -1104,11 +1212,48 @@ def run():
                 if not cli_state.get("model"):
                     console.print("[bold red]Please select a model first using the 'config' command.[/bold red]")
                     continue
-                repo_url = Prompt.ask("Enter GitHub repository URL").strip()
-                if not repo_url: # Gracefully handle empty input
+
+                # --- NEW REPO SELECTION LOGIC ---
+                analyzed_repos = find_analyzed_repos()
+                repo_url_to_analyze = None
+
+                if analyzed_repos:
+                    console.print(Panel("Found previously analyzed repositories. Select one or analyze a new one.",
+                                      title="[cyan]Select Repository[/cyan]", border_style="cyan"))
+                    table = Table(show_header=False, box=None, padding=(0, 2))
+                    for i, repo in enumerate(analyzed_repos, 1):
+                        table.add_row(f"([bold cyan]{i}[/bold cyan])", repo['display_name'])
+                    table.add_row("([bold yellow]N[/bold yellow])", "Analyze a new repository")
+                    console.print(table)
+
+                    choices = [str(i) for i in range(1, len(analyzed_repos) + 1)] + ['n', 'N']
+                    default_choice = '1' if analyzed_repos else 'n'
+
+                    choice = Prompt.ask(
+                        "Enter your choice",
+                        choices=choices,
+                        show_choices=False,
+                        default=default_choice
+                    ).lower()
+
+                    if choice == 'n':
+                        repo_url_to_analyze = Prompt.ask("Enter GitHub repository URL").strip()
+                    elif choice.isdigit() and 1 <= int(choice) <= len(analyzed_repos):
+                        selected_repo = analyzed_repos[int(choice) - 1]
+                        repo_url_to_analyze = selected_repo['url']
+                        console.print(f"✅ Analyzing selected repository: [bold cyan]{repo_url_to_analyze}[/bold cyan]")
+                    else:
+                        console.print("[red]❌ Invalid selection.[/red]")
+                        continue
+                else:
+                    repo_url_to_analyze = Prompt.ask("Enter GitHub repository URL").strip()
+                # --- END NEW REPO SELECTION LOGIC ---
+
+                if not repo_url_to_analyze: # Gracefully handle empty input from either path
                     continue
+
                 try:
-                    session = AnalysisSession(repo_url)
+                    session = AnalysisSession(repo_url_to_analyze)
                     if session.start():
                         session.loop()
                 except ValueError as e:

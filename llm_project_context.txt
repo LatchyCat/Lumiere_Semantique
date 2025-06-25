@@ -123,7 +123,7 @@ history_path.parent.mkdir(parents=True, exist_ok=True)
 API_BASE_URL = "http://127.0.0.1:8002/api/v1"
 
 # Create command completers for better UX
-main_commands = ['analyze', 'a', 'profile', 'p', 'config', 'c', 'help', 'h', 'exit', 'x', 'quit']
+main_commands = ['analyze', 'a', 'profile', 'p', 'config', 'c', 'help', 'h', 'exit', 'x', 'quit', 'list-repos', 'lr']
 analysis_commands = ['list', 'l', 'fix', 'f', 'briefing', 'b', 'rca', 'r', 'details', 'd', 'graph', 'g', 'help', 'h', 'back', 'exit', 'quit']
 
 main_completer = WordCompleter(main_commands, ignore_case=True)
@@ -149,6 +149,40 @@ cli_state = {
     "last_repo_url": None,
     "debug_mode": False,
 }
+
+# --- NEW UTILITY FUNCTIONS for managing analyzed repos ---
+
+def check_if_repo_is_analyzed(repo_id: str) -> bool:
+    """Checks if a specific repo_id directory has all the necessary analysis files."""
+    cloned_repos_dir = Path("backend/cloned_repositories")
+    repo_dir = cloned_repos_dir / repo_id
+    if not repo_dir.is_dir():
+        return False
+
+    cortex_file = repo_dir / f"{repo_id}_cortex.json"
+    faiss_file = repo_dir / f"{repo_id}_faiss.index"
+    map_file = repo_dir / f"{repo_id}_id_map.json"
+
+    return all([cortex_file.exists(), faiss_file.exists(), map_file.exists()])
+
+def find_analyzed_repos() -> List[Dict[str, str]]:
+    """Scans for previously analyzed repositories and validates their artifacts."""
+    analyzed_repos = []
+    cloned_repos_dir = Path("backend/cloned_repositories")
+    if not cloned_repos_dir.is_dir():
+        return []
+
+    for repo_dir in cloned_repos_dir.iterdir():
+        if repo_dir.is_dir():
+            repo_id = repo_dir.name
+            if check_if_repo_is_analyzed(repo_id):
+                # Attempt to reconstruct a user-friendly name and the full URL
+                display_name = repo_id.replace("_", "/", 1)
+                full_url = f"https://github.com/{display_name}"
+                analyzed_repos.append({"repo_id": repo_id, "display_name": display_name, "url": full_url})
+
+    return sorted(analyzed_repos, key=lambda x: x['repo_id'])
+
 
 def load_config():
     """Load configuration from file if it exists."""
@@ -321,6 +355,13 @@ class LumiereAPIClient:
         return self._request("POST", "generate-docstring/", json={
             "repo_id": repo_id,
             "new_code": code,
+            "instruction": instruction
+        })
+
+    def generate_tests(self, repo_id: str, code_to_test: str, instruction: str):
+        return self._request("POST", "generate-tests/", json={
+            "repo_id": repo_id,
+            "new_code": code_to_test,
             "instruction": instruction
         })
 
@@ -499,17 +540,25 @@ class AnalysisSession:
             status.update("[green]✓ Backend connection established")
             time.sleep(0.5)
 
-        try:
-            do_embed = Confirm.ask(
-                "\n[bold]Do you want to clone and embed this repo for full analysis (briefing, rca, fix)?[/bold]\n"
-                "[dim](This can take a few minutes for large repos. Choose 'N' for issue listing only.)[/dim]",
-                default=True
-            )
-        except KeyboardInterrupt:
-            console.print("\n[yellow]Analysis cancelled.[/yellow]")
-            return False
+        # --- MODIFIED: Check for existing repo before asking to ingest ---
+        is_already_analyzed = check_if_repo_is_analyzed(self.repo_id)
+        do_embed = False  # Default to not embedding
 
-        if do_embed:
+        if is_already_analyzed:
+            console.print(f"\n[bold green]✓ Found existing analyzed repository for '{self.repo_id}'.[/bold green] [dim]Skipping ingestion.[/dim]")
+        else:
+            try:
+                # Set do_embed to True only if user confirms for a new repo
+                do_embed = Confirm.ask(
+                    "\n[bold]Do you want to clone and embed this repo for full analysis (briefing, rca, fix)?[/bold]\n"
+                    "[dim](This can take a few minutes for large repos. Choose 'N' for issue listing only.)[/dim]",
+                    default=True
+                )
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Analysis cancelled.[/yellow]")
+                return False
+
+        if do_embed: # This condition is only met for new repos where the user confirmed.
             with Status("[cyan]🚀 Beginning ingestion...[/cyan]", spinner="earth") as status:
                 status.update("[cyan]Cloning repository and analyzing files...[/cyan]")
                 ingest_result = self.api.ingest_repository(self.repo_url)
@@ -836,18 +885,37 @@ class AnalysisSession:
             progress.remove_task(task)
 
         if rca_data and rca_data.get("analysis"):
-            self.last_rca_report = rca_data["analysis"]
-            self.last_rca_issue_num = issue['number']
-            console.print(Panel(
-                Markdown(self.last_rca_report),
-                title=f"[bold red]🕵️ Root Cause Analysis - Issue #{issue['number']}[/bold red]",
-                border_style="red"
-            ))
-            console.print("\n[bold yellow]💡 Pro-tip:[/bold yellow] [dim]You can now type '[/dim][bold]f[/bold][dim]' to start fixing this issue.[/dim]")
+            analysis_text = rca_data["analysis"]
+
+            # --- THIS IS THE FIX ---
+            # Check if the analysis text is actually an error message from the API.
+            is_error = "Error from Gemini API" in analysis_text or "API Request Failed" in analysis_text
+
+            if is_error:
+                # It's an error, so display it but clear the state.
+                self.last_rca_report = None
+                self.last_rca_issue_num = None
+                console.print(Panel(
+                    Markdown(analysis_text),
+                    title=f"[bold red]🕵️ Root Cause Analysis - Issue #{issue['number']} (Failed)[/bold red]",
+                    border_style="red"
+                ))
+            else:
+                # It's a valid report, so save the state.
+                self.last_rca_report = analysis_text
+                self.last_rca_issue_num = issue['number']
+                console.print(Panel(
+                    Markdown(self.last_rca_report),
+                    title=f"[bold red]🕵️ Root Cause Analysis - Issue #{issue['number']}[/bold red]",
+                    border_style="red"
+                ))
+                console.print("\n[bold yellow]💡 Pro-tip:[/bold yellow] [dim]You can now type '[/dim][bold]f[/bold][dim]' to start fixing this issue.[/dim]")
         else:
+            # This handles cases where the API response is malformed.
             self.last_rca_report = None
             self.last_rca_issue_num = None
             console.print("[red]❌ Could not perform root cause analysis.[/red]")
+
 
     def _display_diff(self, original_code: str, new_code: str, filename: str):
         """Display a formatted diff of code changes for a single file."""
@@ -883,14 +951,25 @@ class AnalysisSession:
         ))
 
     def _extract_filenames_from_rca(self, rca_report: str) -> List[str]:
-        """Extracts filenames from markdown code fences or inline backticks."""
-        pattern = r'`([\w./\\-]+)`'
+        """Extracts filenames from markdown code fences, inline backticks, and lists."""
+        # This new, more robust pattern finds filenames:
+        # 1. In backticks: `file.py`
+        # 2. In lists/bullet points: - file.py or * file.py
+        # 3. As standalone words that look like file paths.
+        pattern = r'(?:\s|-|\*|`)([\w./-]+\.(?:py|js|ts|gs|json|md|html|css|yaml|yml|toml|txt))\b'
         matches = re.findall(pattern, rca_report)
+
+        # Also grab any remaining backticked items that the first pass might miss
+        backtick_pattern = r'`([\w./\\-]+)`'
+        matches.extend(re.findall(backtick_pattern, rca_report))
+
+        # Filter and deduplicate
         filenames = sorted(list(set(matches)))
         return [f for f in filenames if '.' in f and f.lower() not in ['true', 'false']]
 
+
     def handle_fix_dialogue(self, issue: Dict):
-        """Handle the complete fix dialogue, now driven by RCA and with documentation step."""
+        """Handle the complete fix dialogue, now driven by RCA and with documentation and automated test generation."""
         console.print(Panel(
             f"[bold cyan]🤝 Socratic Dialogue[/bold cyan] starting for:\n"
             f"[bold green]Issue #{issue['number']}: {issue['title']}[/bold green]",
@@ -927,6 +1006,7 @@ class AnalysisSession:
         modified_files = {}
         original_contents = {}
         is_documented = False
+        are_tests_generated = False # <-- NEW STATE
 
         while iteration_count < max_iterations:
             iteration_count += 1
@@ -950,17 +1030,18 @@ class AnalysisSession:
                 modified_files = fix_data["modified_files"]
                 original_contents = fix_data["original_contents"]
                 is_documented = False
+                are_tests_generated = False # Reset test state on new code generation
 
             console.rule("[bold]📝 Review Proposed Changes[/bold]")
             for filename, new_code in modified_files.items():
-                self._display_diff(original_contents.get(filename, ""), new_code, filename)
+                # Avoid showing a diff for unchanged files
+                if original_contents.get(filename, "") != new_code:
+                    self._display_diff(original_contents.get(filename, ""), new_code, filename)
 
             all_validations_passed = True
-
-            # Create a list of files that are actually testable (i.e., not docs)
             files_to_validate = [
                 f for f in modified_files.keys()
-                if not f.lower().endswith(('.md', '.txt', '.json', '.toml', '.yaml', '.yml'))
+                if not f.lower().endswith(('.md', '.txt', '.json', '.toml', '.yaml', '.yml', '.ron'))
             ]
 
             if not files_to_validate:
@@ -976,7 +1057,6 @@ class AnalysisSession:
                     if not validation_result or validation_result.get("status") != "passed":
                         all_validations_passed = False
                         console.print(Panel(f"❌ [bold red]Validation Failed for {filename}[/bold red]\n[bold]Test Results:[/bold]\n{validation_result.get('logs', 'No logs') if validation_result else 'Crucible service error'}", title=f"[red]🔥 Crucible Report: {filename}[/red]", border_style="red"))
-                        # Immediately stop validation on the first failure
                         break
 
             if all_validations_passed and files_to_validate:
@@ -994,8 +1074,12 @@ class AnalysisSession:
                         if not is_documented and any(f.endswith((".py", ".js", ".ts")) for f in modified_files.keys()):
                            action_choices.append('d')
                            prompt_text += "[bold blue](d)[/bold blue] Document the changes\n"
+                        # --- NEW "GENERATE TESTS" OPTION ---
+                        if not are_tests_generated:
+                            action_choices.append('t')
+                            prompt_text += "[bold yellow](t)[/bold yellow] Generate tests for the fix\n"
                     else:
-                        prompt_text += "\n[bold red]❌ Validation failed. Choose action:[/bold]\n"
+                        prompt_text += "\n[bold red]❌ Validation failed. Choose action:[/bold red]\n"
 
                     prompt_text += "[bold yellow](r)[/bold yellow] Refine with feedback\n"
                     prompt_text += "[bold red](c)[/bold red] Cancel"
@@ -1030,8 +1114,46 @@ class AnalysisSession:
                     console.print("[green]✓ Documentation complete.[/green]")
                     console.rule("[bold]📝 Review Updated Changes with Documentation[/bold]")
                     for filename, new_code in modified_files.items():
-                        self._display_diff(original_contents.get(filename, ""), new_code, filename)
+                         if original_contents.get(filename, "") != new_code:
+                            self._display_diff(original_contents.get(filename, ""), new_code, filename)
                     continue
+
+                # --- NEW TEST GENERATION HANDLER ---
+                if choice == 't':
+                    if are_tests_generated:
+                        console.print("[yellow]Tests have already been generated for this fix.[/yellow]")
+                        continue
+                    if not all_validations_passed:
+                        console.print("[red]Cannot generate tests for code that has failed validation.[/red]")
+                        continue
+
+                    generated_test_files = {}
+                    with Status("[bold yellow]🔬 Calling Test Generation Agent...[/bold yellow]") as status:
+                        for filename, code in modified_files.items():
+                            # Only generate tests for runnable code, not for tests themselves
+                            if any(filename.endswith(ext) for ext in [".py", ".js", ".ts"]) and 'test' not in filename:
+                                status.update(f"[bold yellow]🔬 Generating tests for {filename}...[/bold yellow]")
+                                test_result = self.api.generate_tests(self.repo_id, code, issue_desc)
+
+                                if test_result and test_result.get("generated_tests"):
+                                    # Heuristic to determine the new test file's path
+                                    test_file_path = f"tests/test_{Path(filename).stem}.py"
+                                    generated_test_files[test_file_path] = test_result["generated_tests"]
+                                    console.print(f"  [green]✓[/green] Generated test file: [cyan]{test_file_path}[/cyan]")
+                                else:
+                                    console.print(f"  [red]✗[/red] Failed to generate tests for [cyan]{filename}[/cyan].")
+
+                    if generated_test_files:
+                        modified_files.update(generated_test_files)
+                        are_tests_generated = True  # Set the flag
+                        console.print("\n[green]✓ Test generation complete.[/green]")
+                        console.rule("[bold]📝 Review New Test Files[/bold]")
+                        for filename, new_code in generated_test_files.items():
+                            self._display_diff("", new_code, filename) # Original is "" for a new file
+                    else:
+                        console.print("[yellow]No new tests were generated.[/yellow]")
+
+                    continue # Go back to the user action menu
 
                 if choice == 'c': break
                 if choice == 'a' and all_validations_passed: break
@@ -1067,6 +1189,11 @@ class AnalysisSession:
                     console.print("[red]❌ Failed to create pull request.[/red]")
                 break
 
+        self.last_rca_report = None
+        self.last_rca_issue_num = None
+
+
+        
 # --- Utility Function for Help Display ---
 def display_interactive_help(context: str = 'main'):
     """Display help instructions based on the current CLI context."""
@@ -1167,11 +1294,48 @@ def run():
                 if not cli_state.get("model"):
                     console.print("[bold red]Please select a model first using the 'config' command.[/bold red]")
                     continue
-                repo_url = Prompt.ask("Enter GitHub repository URL").strip()
-                if not repo_url: # Gracefully handle empty input
+
+                # --- NEW REPO SELECTION LOGIC ---
+                analyzed_repos = find_analyzed_repos()
+                repo_url_to_analyze = None
+
+                if analyzed_repos:
+                    console.print(Panel("Found previously analyzed repositories. Select one or analyze a new one.",
+                                      title="[cyan]Select Repository[/cyan]", border_style="cyan"))
+                    table = Table(show_header=False, box=None, padding=(0, 2))
+                    for i, repo in enumerate(analyzed_repos, 1):
+                        table.add_row(f"([bold cyan]{i}[/bold cyan])", repo['display_name'])
+                    table.add_row("([bold yellow]N[/bold yellow])", "Analyze a new repository")
+                    console.print(table)
+
+                    choices = [str(i) for i in range(1, len(analyzed_repos) + 1)] + ['n', 'N']
+                    default_choice = '1' if analyzed_repos else 'n'
+
+                    choice = Prompt.ask(
+                        "Enter your choice",
+                        choices=choices,
+                        show_choices=False,
+                        default=default_choice
+                    ).lower()
+
+                    if choice == 'n':
+                        repo_url_to_analyze = Prompt.ask("Enter GitHub repository URL").strip()
+                    elif choice.isdigit() and 1 <= int(choice) <= len(analyzed_repos):
+                        selected_repo = analyzed_repos[int(choice) - 1]
+                        repo_url_to_analyze = selected_repo['url']
+                        console.print(f"✅ Analyzing selected repository: [bold cyan]{repo_url_to_analyze}[/bold cyan]")
+                    else:
+                        console.print("[red]❌ Invalid selection.[/red]")
+                        continue
+                else:
+                    repo_url_to_analyze = Prompt.ask("Enter GitHub repository URL").strip()
+                # --- END NEW REPO SELECTION LOGIC ---
+
+                if not repo_url_to_analyze: # Gracefully handle empty input from either path
                     continue
+
                 try:
-                    session = AnalysisSession(repo_url)
+                    session = AnalysisSession(repo_url_to_analyze)
                     if session.start():
                         session.loop()
                 except ValueError as e:
@@ -4944,252 +5108,289 @@ def get_file_content(repo_id: str, file_path: str) -> Optional[str]:
 # backend/lumiere_core/services/code_surgery.py
 
 import re
-import json
-from typing import Dict, Tuple, Optional, List
+import ast
+from typing import Dict, Tuple, Optional, List, Set, Any
 
-def _get_function_signature(code_block: str) -> str:
-    """Extracts the function signature (e.g., 'function setupWelcomeSheet(ss)') from a block of code."""
-    # Handle both regular functions and arrow functions
-    match = re.search(r"(?:function\s+\w+\s*\(.*?\)|\w+\s*[:=]\s*\(.*?\)\s*=>)", code_block)
-    if match:
-        return match.group(0)
-    return ""
+# ==============================================================================
+# SECTION 1: CORE EXECUTOR / ROUTER
+# ==============================================================================
 
-def _validate_function_code(func_code: str, expected_func_name: str) -> bool:
-    """Validates that the function code contains a proper function definition."""
-    if not func_code or not func_code.strip():
-        return False
+def execute_surgical_plan(
+    original_contents: Dict[str, str],
+    plan: List[Dict[str, Any]]
+) -> Tuple[Dict[str, str], Dict[str, Any]]:
+    """
+    Main entry point for the Code Surgery agent.
+    Iterates through a surgical plan and applies the specified operations.
+    """
+    modified_contents = original_contents.copy()
+    report = {
+        "operations_attempted": len(plan),
+        "operations_succeeded": 0,
+        "operations_failed": 0,
+        "errors": []
+    }
 
-    # Check if it contains the expected function name
-    if expected_func_name not in func_code:
-        return False
+    for op in plan:
+        operation_type = op.get("operation")
+        file_path = op.get("file_path")
 
-    # Check if it has function keyword or arrow function syntax
-    has_function_keyword = "function" in func_code
-    has_arrow_function = "=>" in func_code
+        try:
+            if operation_type == "CREATE_FILE":
+                modified_contents[file_path] = _handle_create_file(op)
 
-    if not (has_function_keyword or has_arrow_function):
-        return False
+            elif operation_type == "REPLACE_BLOCK":
+                current_content = modified_contents.get(file_path, "")
+                modified_contents[file_path] = _handle_replace_block(current_content, op)
 
-    # Basic brace balance check
-    open_braces = func_code.count('{')
-    close_braces = func_code.count('}')
+            elif operation_type == "ADD_FIELD_TO_STRUCT":
+                current_content = modified_contents.get(file_path, "")
+                modified_contents[file_path] = _handle_add_field_to_struct(current_content, op)
 
-    return open_braces > 0 and open_braces == close_braces
+            else:
+                raise ValueError(f"Unknown operation type: '{operation_type}'")
 
-def _extract_function_parameters(signature: str) -> List[str]:
-    """Extract parameter names from a function signature."""
-    match = re.search(r'\((.*?)\)', signature)
+            print(f"  ✓ Operation '{operation_type}' on '{file_path}' succeeded.")
+            report["operations_succeeded"] += 1
+
+        except Exception as e:
+            error_msg = f"Operation '{operation_type}' on '{file_path}' failed: {e}"
+            print(f"  ❌ {error_msg}")
+            report["errors"].append(error_msg)
+            report["operations_failed"] += 1
+
+    return modified_contents, report
+
+
+# ==============================================================================
+# SECTION 2: OPERATION HANDLERS
+# ==============================================================================
+
+def _handle_create_file(operation: Dict[str, Any]) -> str:
+    """Handles the CREATE_FILE operation. Returns the new file content."""
+    return operation.get("content", "")
+
+def _handle_replace_block(original_content: str, operation: Dict[str, Any]) -> str:
+    """Handles the REPLACE_BLOCK operation for functions, methods, or classes."""
+    target_id = operation.get("target_identifier")
+    new_content = operation.get("content", "")
+    file_path = operation.get("file_path", "")
+
+    language = 'python' if file_path.endswith('.py') else 'rust' if file_path.endswith('.rs') else 'markdown' if file_path.endswith('.md') else 'javascript'
+
+    boundaries = _find_block_boundaries(original_content, target_id, language)
+    if not boundaries:
+        raise ValueError(f"Could not find function/block '{target_id}' to replace.")
+
+    start_pos, end_pos = boundaries
+    # Ensure a newline after the replacement, unless it's the end of the file
+    new_code_with_newline = new_content + "\n" if end_pos < len(original_content) else new_content
+    return original_content[:start_pos] + new_code_with_newline + original_content[end_pos:]
+
+def _handle_add_field_to_struct(original_content: str, operation: Dict[str, Any]) -> str:
+    """Handles the ADD_FIELD_TO_STRUCT operation, specifically for Rust/C-like languages."""
+    target_id = operation.get("target_identifier")
+    new_field_line = operation.get("content", "")
+
+    pattern = re.compile(
+        rf"(struct\s+{re.escape(target_id)}\s*{{)(.*?)(\}})",
+        re.DOTALL | re.MULTILINE
+    )
+    match = pattern.search(original_content)
+
     if not match:
-        return []
+        raise ValueError(f"Could not find struct definition for '{target_id}'.")
 
-    params_str = match.group(1).strip()
-    if not params_str:
-        return []
+    struct_header, struct_body, struct_footer = match.groups()
+    lines = struct_body.strip().split('\n')
+    indentation = "    "
+    if lines and lines[-1].strip():
+        last_line = lines[-1]
+        indentation = " " * (len(last_line) - len(last_line.lstrip()))
 
-    # Split by comma and clean up parameter names
-    params = [param.strip().split('=')[0].strip() for param in params_str.split(',')]
-    return [p for p in params if p]
+    new_body = struct_body.rstrip() + "\n" + indentation + new_field_line.strip() + "\n"
+    new_struct_code = struct_header + new_body + struct_footer
+    return original_content.replace(match.group(0), new_struct_code)
 
-def _signatures_compatible(old_signature: str, new_signature: str) -> bool:
-    """Check if two function signatures are compatible."""
-    old_params = _extract_function_parameters(old_signature)
-    new_params = _extract_function_parameters(new_signature)
 
-    # Allow new function to have same or fewer required parameters
-    # This is a basic check - could be more sophisticated
-    return len(new_params) <= len(old_params) + 1  # Allow one extra parameter
+# ==============================================================================
+# SECTION 3: THE FINAL, UPGRADED "FINDER"
+# ==============================================================================
 
-def _find_function_boundaries(content: str, func_name: str) -> Optional[Tuple[int, int]]:
+def _find_block_boundaries(content: str, block_name: str, language: str) -> Optional[Tuple[int, int]]:
     """
-    Find the start and end positions of a function in the content.
-    Returns (start_pos, end_pos) or None if not found.
+    Find the start and end text positions of a function/method/block in the content.
+    --- THIS IS THE ENHANCED VERSION ---
     """
-    # Escape function name for regex
-    escaped_name = re.escape(func_name)
+    if language == 'markdown':
+        # ... (markdown logic is fine, no changes needed here) ...
+        # For brevity, I'm omitting the markdown part. The code is in your file.
+        heading_level = block_name.count('#')
+        safe_block_name = re.escape(block_name.replace('#', '').strip())
+        pattern = re.compile(rf"^(#{'{'}{heading_level}{'}'}\s*{safe_block_name}.*?)$", re.MULTILINE | re.IGNORECASE)
+        match = pattern.search(content)
 
-    # Pattern to match function declaration
-    pattern = rf"function\s+{escaped_name}\s*\(.*?\)\s*\{{"
+        if not match:
+            return None
 
-    match = re.search(pattern, content, re.MULTILINE)
-    if not match:
-        return None
+        start_pos = match.start()
+        next_heading_pattern = re.compile(rf"^(#{'{1,'}{heading_level}{'}'}\s+.*)$", re.MULTILINE)
+        next_match = next_heading_pattern.search(content, pos=match.end())
 
-    start_pos = match.start()
+        end_pos = next_match.start() if next_match else len(content)
+        return (start_pos, end_pos)
 
-    # Find the matching closing brace
-    brace_count = 0
-    pos = match.end() - 1  # Start from the opening brace
+    # --- Start of significant changes ---
+    if language == 'python':
+        try:
+            tree = ast.parse(content)
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == block_name:
+                    # AST parsing logic remains the same
+                    start_pos = -1
+                    # This logic correctly finds the start and end using AST, which is reliable.
+                    # No changes needed here.
+                    if hasattr(node, 'decorator_list') and node.decorator_list:
+                        # Find the start of the first decorator
+                        start_pos = content.find(ast.get_source_segment(content, node.decorator_list[0]))
+                    else:
+                        # No decorators, find the start of the node itself
+                        start_pos = content.find(ast.get_source_segment(content, node))
 
-    while pos < len(content):
-        char = content[pos]
-        if char == '{':
-            brace_count += 1
-        elif char == '}':
-            brace_count -= 1
-            if brace_count == 0:
-                return (start_pos, pos + 1)
-        pos += 1
+                    if start_pos != -1:
+                        end_pos = start_pos + len(ast.get_source_segment(content, node))
+                        return (start_pos, end_pos)
+            return None # Explicitly return None if not found in AST walk
+        except (SyntaxError, ValueError):
+            # Fallback to regex if AST parsing fails
+            pass
 
-    return None
+    # Generic Regex-based search for Rust, JS, etc.
+    # Escape the block name to be safe in regex, but keep ` ` as a flexible spacer
+    flexible_name = re.escape(block_name).replace(r'\ ', r'\s+')
 
-def _validate_snippets_response(data: Dict) -> Tuple[bool, str]:
-    """
-    Validate that the LLM response has the expected structure.
-    Returns (is_valid, error_message)
-    """
-    if not isinstance(data, dict):
-        return False, "Response is not a dictionary"
-
-    for file_path, snippets in data.items():
-        if not isinstance(file_path, str):
-            return False, f"File path is not a string: {file_path}"
-
-        if not isinstance(snippets, dict):
-            return False, f"Snippets for {file_path} is not a dictionary"
-
-        for func_name, func_code in snippets.items():
-            if not isinstance(func_name, str):
-                return False, f"Function name is not a string: {func_name}"
-
-            if not isinstance(func_code, str):
-                return False, f"Function code for {func_name} is not a string"
-
-            if not _validate_function_code(func_code, func_name):
-                return False, f"Invalid function code for {func_name}"
-
-    return True, ""
-
-def replace_functions_in_file(original_content: str, changed_snippets: Dict[str, str]) -> str:
-    """
-    Surgically replaces functions in an original file with new versions.
-
-    Args:
-        original_content: The full original content of the file.
-        changed_snippets: A dictionary where keys are function names and values are the new function code.
-
-    Returns:
-        The full file content with the functions replaced.
-    """
-    if not original_content or not original_content.strip():
-        print("⚠️ Warning: Original content is empty")
-        return original_content
-
-    if not changed_snippets:
-        print("⚠️ Warning: No snippets to replace")
-        return original_content
-
-    modified_content = original_content
-    replacement_count = 0
-
-    for func_name, new_func_code in changed_snippets.items():
-        # Validate the new function code
-        if not _validate_function_code(new_func_code, func_name):
-            print(f"⚠️ Skipping snippet for '{func_name}' - invalid function code")
-            continue
-
-        # Find function boundaries
-        boundaries = _find_function_boundaries(modified_content, func_name)
-        if not boundaries:
-            print(f"⚠️ Warning: Could not find function '{func_name}' in the original file")
-            continue
-
-        start_pos, end_pos = boundaries
-
-        # Extract original function for comparison
-        original_func = modified_content[start_pos:end_pos]
-        original_signature = _get_function_signature(original_func)
-        new_signature = _get_function_signature(new_func_code)
-
-        # Check signature compatibility
-        if original_signature and new_signature:
-            if not _signatures_compatible(original_signature, new_signature):
-                print(f"⚠️ Warning: Function '{func_name}' has incompatible signature")
-                print(f"   Original: {original_signature}")
-                print(f"   New: {new_signature}")
-                # Still proceed but warn the user
-
-        # Perform the replacement
-        modified_content = (
-            modified_content[:start_pos] +
-            new_func_code +
-            modified_content[end_pos:]
-        )
-
-        replacement_count += 1
-        print(f"✓ Replaced function '{func_name}'")
-
-    if replacement_count == 0:
-        print("⚠️ Warning: No functions were replaced")
-    else:
-        print(f"✓ Successfully replaced {replacement_count} function(s)")
-
-    return modified_content
-
-def validate_and_parse_snippets(llm_response: str) -> Tuple[Optional[Dict], str]:
-    """
-    Validate and parse the LLM response containing function snippets.
-    Returns (parsed_data, error_message)
-    """
-    if not llm_response or not llm_response.strip():
-        return None, "LLM response is empty"
-
-    # Try to extract JSON from the response
-    json_str = extract_json_from_llm(llm_response)
-    if not json_str:
-        return None, "Could not extract JSON from LLM response"
-
-    try:
-        data = json.loads(json_str)
-    except json.JSONDecodeError as e:
-        return None, f"Failed to parse JSON: {str(e)}"
-
-    # Validate structure
-    is_valid, error_msg = _validate_snippets_response(data)
-    if not is_valid:
-        return None, f"Invalid response structure: {error_msg}"
-
-    return data, ""
-
-def extract_json_from_llm(llm_response: str) -> Optional[str]:
-    """
-    Extract JSON content from LLM response that might contain additional text.
-    """
-    # Look for content between ```json and ``` or between { and }
-    json_patterns = [
-        r'```json\s*(.*?)\s*```',
-        r'```\s*(.*?)\s*```',
-        r'(\{.*\})',
+    # NEW, more robust regex patterns for Rust `impl` blocks
+    patterns = [
+        # Rust `impl Trait for Struct` (e.g., `impl Default for ConfigFile`)
+        rf"^(?:pub(?:\(.*\))?\s+)?impl\s+{flexible_name}\s*{{",
+        # Standard impl block (e.g., `impl ConfigFile`)
+        rf"^(?:pub(?:\(.*\))?\s+)?impl(?:<[^>]*>)?\s+{flexible_name}\s*{{",
+        # Functions
+        rf"^(?:pub(?:\(.*\))?\s+)?(?:async\s+)?fn\s+{flexible_name}\s*\(",
+        # Structs
+        rf"^(?:pub(?:\(.*\))?\s+)?struct\s+{flexible_name}\s*{{",
+        # JS/TS/Python Fallbacks
+        rf"^(?:export\s+)?(?:async\s+)?function\s+{flexible_name}\s*\(",
+        rf"^\s*@?.*\s*def\s+{flexible_name}\s*\(",
+        rf"^\s*class\s+{flexible_name}",
     ]
 
-    for pattern in json_patterns:
-        match = re.search(pattern, llm_response, re.DOTALL)
+    for pattern_str in patterns:
+        pattern = re.compile(pattern_str, re.MULTILINE)
+        match = pattern.search(content)
         if match:
-            json_candidate = match.group(1).strip()
-            # Try to parse to validate it's JSON
-            try:
-                json.loads(json_candidate)
-                return json_candidate
-            except json.JSONDecodeError:
-                continue
+            start_pos = match.start()
+            # Find the end of the block by matching braces `{}`
+            if '{' in content[start_pos:match.end()]:
+                pos = content.find('{', start_pos)
+                brace_count = 1
+                while pos < len(content) - 1:
+                    pos += 1
+                    if content[pos] == '{':
+                        brace_count += 1
+                    elif content[pos] == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            return (start_pos, pos + 1)
+            # Find the end of Python block by indentation
+            elif ':' in content[start_pos:match.end()]:
+                lines = content[start_pos:].splitlines()
+                if not lines: return None
+                base_indent = len(lines[0]) - len(lines[0].lstrip())
+                end_line_index = 0
+                for i, line in enumerate(lines[1:]):
+                    if line.strip() and (len(line) - len(line.lstrip()) <= base_indent):
+                        end_line_index = i
+                        break
+                else:
+                    end_line_index = len(lines) -1
+
+                end_pos = start_pos + len("\n".join(lines[:end_line_index + 1]))
+                return (start_pos, end_pos)
 
     return None
 
-def get_relevant_code_from_cortex(content: str, rca_report: str) -> str:
+
+def get_relevant_code_from_cortex(content: str, rca_report: str, file_path: str) -> str:
     """
-    Extract relevant code sections based on the RCA report.
-    This is a simplified version - you might want to make this more sophisticated.
+    Extracts relevant code sections from a file's content based on an RCA report.
     """
     if not content or not rca_report:
         return content
 
-    # For now, return the full content
-    # In a more sophisticated version, you could:
-    # 1. Extract function names mentioned in the RCA report
-    # 2. Find and return only those functions
-    # 3. Include imports and dependencies
+    keywords = _extract_keywords_from_rca(rca_report)
+    if not keywords:
+        return content
 
-    return content
+    if not file_path.endswith('.py'):
+        relevant_lines = []
+        for line in content.splitlines():
+            if any(kw in line for kw in keywords):
+                relevant_lines.append(line)
+        return "\n".join(relevant_lines) if relevant_lines else content
+
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return content
+
+    relevant_nodes = []
+    import_nodes = [node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name in keywords:
+                relevant_nodes.append(node)
+                if isinstance(node, ast.ClassDef):
+                    for sub_node in node.body:
+                        if isinstance(sub_node, (ast.FunctionDef, ast.AsyncFunctionDef)) and sub_node.name in keywords and sub_node not in relevant_nodes:
+                            relevant_nodes.append(sub_node)
+
+    if not relevant_nodes:
+        return content
+
+    code_parts = [ast.get_source_segment(content, n) for n in import_nodes if n]
+    if code_parts and relevant_nodes:
+        code_parts.append("\n... # (Code imports)\n")
+
+    added_sources = set()
+    for node in sorted(relevant_nodes, key=lambda n: n.lineno):
+        source_segment = ast.get_source_segment(content, node)
+        if source_segment and source_segment not in added_sources:
+            code_parts.append(source_segment)
+            added_sources.add(source_segment)
+
+    separator = "\n\n... # (Code omitted for brevity)\n\n"
+    final_code = separator.join(part for part in code_parts if part)
+
+    print(f"  🧠 Compressed code for '{file_path}'. Original: {len(content)} chars, Compressed: {len(final_code)} chars.")
+    return final_code
+
+
+def _extract_keywords_from_rca(rca_report: str) -> Set[str]:
+    """Extracts potential function, class, and variable names from the RCA report."""
+    keywords = set()
+    keywords.update(re.findall(r'`([^`]+)`', rca_report))
+    keywords.update(re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', rca_report))
+    keywords.update(re.findall(r'\b([A-Z][a-z]+(?:[A-Z][a-z]+)*|[a-z]+(?:_[a-z]+)+)\b', rca_report))
+
+    cleaned_keywords = set()
+    for kw in keywords:
+        cleaned = kw.split('.')[-1].split('::')[-1]
+        if len(cleaned) > 2:
+            cleaned_keywords.add(cleaned)
+
+    return cleaned_keywords
 
 --- FILE_END: backend/lumiere_core/services/code_surgery.py ---
 
@@ -5246,8 +5447,7 @@ def _validate_file_changes(modified_files: Dict[str, str]) -> List[str]:
             errors.append(f"Invalid content type for {file_path}: expected string, got {type(content)}")
 
         # Check for potentially dangerous paths
-        normalized_path = Path(file_path).resolve()
-        if str(normalized_path).startswith('/') or '..' in file_path:
+        if file_path.startswith('/') or '..' in file_path:
             errors.append(f"Potentially unsafe file path: {file_path}")
 
     return errors
@@ -5277,8 +5477,8 @@ def _write_files_safely(repo_path: Path, modified_files: Dict[str, str]) -> List
                 full_target_path.write_text(new_content, encoding='utf-8')
 
                 # Stage the file
-                result = subprocess.run(
-                    ['git', 'add', file_path],
+                subprocess.run(
+                    ['git', 'add', str(full_target_path)],
                     cwd=repo_path,
                     capture_output=True,
                     text=True,
@@ -5301,7 +5501,7 @@ def _write_files_safely(repo_path: Path, modified_files: Dict[str, str]) -> List
                 raise e
 
         except Exception as e:
-            print(f"⚠ Failed to write {file_path}: {e}")
+            print(f"⚠ Failed to write and stage {file_path}: {e}")
             # Continue with other files rather than failing completely
             continue
 
@@ -5313,7 +5513,7 @@ def _run_git_command(command: List[str], repo_path: Path, description: str) -> b
     Returns True if successful, False otherwise.
     """
     try:
-        result = subprocess.run(
+        subprocess.run(
             command,
             cwd=repo_path,
             capture_output=True,
@@ -5323,207 +5523,110 @@ def _run_git_command(command: List[str], repo_path: Path, description: str) -> b
         print(f"✓ {description}")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"✗ {description} failed: {e.stderr}")
+        print(f"✗ {description} failed: {e.stderr.strip()}")
         return False
 
-def _generate_pr_body(issue_data: Dict[str, Any], issue_number: int, modified_files: Dict[str, str]) -> str:
+def _generate_pr_body(issue_data: Dict[str, Any], issue_number: int, modified_files: List[str]) -> str:
     """Generates a comprehensive PR body with file change summary."""
     pr_body = f"""
 This pull request was automatically generated and approved by the user via the Lumière Sémantique 'Socratic Dialogue' interface to address Issue #{issue_number}.
 
 ## Issue Summary
-{issue_data.get('body', 'No description provided.')[:500]}{'...' if len(issue_data.get('body', '')) > 500 else ''}
+> {issue_data.get('body', 'No description provided.')[:500]}{'...' if len(issue_data.get('body', '')) > 500 else ''}
 
 ## Changes in this PR
 This PR modifies **{len(modified_files)}** file(s) to resolve the issue:
 
 """
 
-    # Group files by type for better organization
-    file_groups = {}
-    for file_path in modified_files.keys():
-        ext = Path(file_path).suffix or 'no-extension'
-        if ext not in file_groups:
-            file_groups[ext] = []
-        file_groups[ext].append(file_path)
-
-    for ext, files in sorted(file_groups.items()):
-        if ext != 'no-extension':
-            pr_body += f"\n**{ext.upper()} files:**\n"
-        else:
-            pr_body += f"\n**Other files:**\n"
-
-        for file_path in sorted(files):
-            pr_body += f"- `{file_path}`\n"
+    for file_path in sorted(modified_files):
+        pr_body += f"- `{file_path}`\n"
 
     pr_body += "\n---\n*This fix was validated by The Crucible against the project's existing test suite.*"
 
     return pr_body
 
-# --- ENHANCED: Multi-file dispatch with better error handling and validation ---
 def dispatch_pr(
     issue_url: str,
-    modified_files: Union[Dict[str, str], str],
+    modified_files: Dict[str, str],
     model_identifier: str,
     custom_commit_message: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Orchestrates the git operations and PR creation for a multi-file change set.
-
-    Args:
-        issue_url: GitHub issue URL
-        modified_files: Dictionary of file paths to content, or single file path for backward compatibility
-        model_identifier: LLM model to use for generating commit messages
-        custom_commit_message: Optional custom commit message to override LLM generation
-
-    Returns:
-        Dictionary with status and either success data or error information
     """
     print("--- AMBASSADOR AGENT ACTIVATED (MULTI-FILE MODE) ---")
-    print(f"Target Issue: {issue_url}")
 
-    # Handle backward compatibility - convert single file to dict format
-    if isinstance(modified_files, str):
-        print("⚠ Legacy single-file mode detected - consider upgrading to dictionary format")
-        # This would need additional parameters for content in legacy mode
-        # For now, we'll assume it's already in the new format
-        pass
-
-    if isinstance(modified_files, dict):
-        print(f"Files to modify: {list(modified_files.keys())}")
-
-        # Validate input
-        validation_errors = _validate_file_changes(modified_files)
-        if validation_errors:
-            return {
-                "error": f"Validation failed: {'; '.join(validation_errors)}",
-                "validation_errors": validation_errors
-            }
-    else:
-        return {"error": "modified_files must be a dictionary of file paths to content"}
+    validation_errors = _validate_file_changes(modified_files)
+    if validation_errors:
+        return {"error": f"Validation failed: {'; '.join(validation_errors)}"}
 
     print("\n[Step 1/4] Gathering Intel...")
     try:
         issue_data = scrape_github_issue(issue_url)
-        if not issue_data:
-            raise ValueError("Failed to scrape issue data from GitHub.")
-
+        if not issue_data: raise ValueError("Failed to scrape issue data.")
         parsed_url = _parse_github_issue_url(issue_url)
-        if not parsed_url:
-            raise ValueError("Could not parse the provided issue URL.")
+        if not parsed_url: raise ValueError("Could not parse issue URL.")
         owner, repo_name, issue_number = parsed_url
         repo_full_name = f"{owner}/{repo_name}"
-        print(f"✓ Intel gathered for issue #{issue_number}.")
     except Exception as e:
-        return {"error": f"Failed during intel gathering: {e}", "step": "intel_gathering"}
+        return {"error": f"Intel gathering failed: {e}"}
 
     print("\n[Step 2/4] Preparing Repository...")
     try:
         upstream_repo = g.get_repo(repo_full_name)
-        working_repo = None
-
-        if upstream_repo.owner.login == GITHUB_USERNAME:
-            print(f"✓ Target repo is owned by '{GITHUB_USERNAME}'. Skipping fork.")
-            working_repo = upstream_repo
-        else:
-            print(f"Target repo owned by '{upstream_repo.owner.login}'. Finding or creating fork.")
-            try:
-                working_repo = g.get_repo(f"{GITHUB_USERNAME}/{repo_name}")
-                print(f"✓ Fork '{working_repo.full_name}' already exists.")
-            except GithubException:
-                print("Fork not found. Creating fork...")
-                working_repo = upstream_repo.create_fork()
-                print(f"✓ Fork created at '{working_repo.full_name}'. Waiting for it to be ready...")
-                time.sleep(15)
+        fork_name = f"{GITHUB_USERNAME}/{repo_name}"
+        try:
+            working_repo = g.get_repo(fork_name)
+            print(f"✓ Using existing fork: {fork_name}")
+        except GithubException:
+            print("Creating fork...")
+            working_repo = upstream_repo.create_fork()
+            time.sleep(15) # Wait for fork to be ready
 
         with IntelligentCrawler(repo_url=working_repo.clone_url) as crawler:
             repo_path = crawler.repo_path
-            sanitized_title = _sanitize_branch_name(issue_data['title'])
-            branch_name = f"lumiere-fix/{issue_number}-{sanitized_title}"
-            print(f"✓ Cloned {working_repo.full_name} to '{repo_path}'")
-
-            print(f"\n[Step 3/4] Applying Fix on new branch '{branch_name}'...")
+            branch_name = f"lumiere-fix/{issue_number}-{_sanitize_branch_name(issue_data['title'])}"
             default_branch = upstream_repo.default_branch
 
-            # Use the new git command helper
+            print(f"\n[Step 3/4] Applying Fix on new branch '{branch_name}'...")
             if not _run_git_command(['git', 'checkout', default_branch], repo_path, f"Switched to {default_branch}"):
-                return {"error": "Failed to checkout default branch", "step": "git_operations"}
-
-            if not _run_git_command(['git', 'pull', 'origin', default_branch], repo_path, f"Pulled latest {default_branch}"):
-                return {"error": "Failed to pull latest changes", "step": "git_operations"}
-
+                return {"error": "Failed to checkout default branch"}
+            if not _run_git_command(['git', 'pull', upstream_repo.clone_url, default_branch], repo_path, f"Pulled latest from upstream {default_branch}"):
+                 return {"error": "Failed to pull latest upstream changes"}
             if not _run_git_command(['git', 'checkout', '-b', branch_name], repo_path, f"Created branch {branch_name}"):
-                return {"error": "Failed to create new branch", "step": "git_operations"}
+                _run_git_command(['git', 'checkout', branch_name], repo_path, f"Switched to existing branch {branch_name}") # If branch exists
 
-            # Write files with improved error handling
             successfully_written = _write_files_safely(repo_path, modified_files)
-
             if not successfully_written:
-                return {
-                    "error": "No files were successfully written",
-                    "step": "file_operations",
-                    "attempted_files": list(modified_files.keys())
-                }
+                return {"error": "No files were successfully written"}
 
-            if len(successfully_written) < len(modified_files):
-                print(f"⚠ Warning: Only {len(successfully_written)}/{len(modified_files)} files were successfully written")
-
-            # Generate or use custom commit message
             if custom_commit_message:
-                commit_message = custom_commit_message.strip()
-                print(f"✓ Using custom commit message: \"{commit_message}\"")
+                commit_message = custom_commit_message
             else:
-                commit_prompt = f"""Based on the issue title '{issue_data['title']}' and the following files being modified: {', '.join(successfully_written)}, write a concise, one-line commit message following the Conventional Commits specification (e.g., 'fix: ...', 'feat: ...', 'refactor: ...'). Output ONLY the commit message line."""
-
+                commit_prompt = f"""Based on the issue title '{issue_data['title']}' and the following files being modified: {', '.join(successfully_written)}, write a concise, one-line commit message following the Conventional Commits specification (e.g., 'fix: ...', 'feat: ...'). Output ONLY the commit message line."""
                 commit_message = llm_service.generate_text(commit_prompt, model_identifier=model_identifier).strip()
-                print(f"✓ Generated commit message: \"{commit_message}\"")
 
             if not _run_git_command(['git', 'commit', '-m', commit_message], repo_path, "Committed changes"):
-                return {"error": "Failed to commit changes", "step": "git_operations"}
-
-            if not _run_git_command(['git', 'push', '--set-upstream', 'origin', branch_name], repo_path, "Pushed branch"):
-                return {"error": "Failed to push branch", "step": "git_operations"}
+                return {"error": "Failed to commit changes. Nothing to commit or git error."}
+            if not _run_git_command(['git', 'push', '--set-upstream', 'origin', branch_name, '--force'], repo_path, "Pushed branch"):
+                return {"error": "Failed to push branch"}
 
             print("\n[Step 4/4] Creating Pull Request...")
-            pr_title = f"Fix: {issue_data['title']} (Resolves #{issue_number})"
-            pr_body = _generate_pr_body(issue_data, issue_number, modified_files)
-
+            pr_title = f"fix: {issue_data['title']} (resolves #{issue_number})"
+            pr_body = _generate_pr_body(issue_data, issue_number, successfully_written)
             head_branch = f"{working_repo.owner.login}:{branch_name}"
-            time.sleep(5)  # Brief pause to ensure branch is available
 
-            try:
-                pull_request = upstream_repo.create_pull(
-                    title=pr_title, body=pr_body, head=head_branch, base=default_branch
-                )
-                print(f"✓ Pull Request created successfully: {pull_request.html_url}")
-
-                return {
-                    "status": "success",
-                    "pull_request_url": pull_request.html_url,
-                    "files_modified": successfully_written,
-                    "files_attempted": list(modified_files.keys()),
-                    "commit_message": commit_message,
-                    "branch_name": branch_name
-                }
-            except GithubException as e:
-                return {
-                    "error": f"Failed to create pull request: {e.data}",
-                    "step": "pr_creation",
-                    "files_modified": successfully_written
-                }
+            pull_request = upstream_repo.create_pull(
+                title=pr_title, body=pr_body, head=head_branch, base=default_branch
+            )
+            print(f"✓ Pull Request created: {pull_request.html_url}")
+            return {"status": "success", "pull_request_url": pull_request.html_url}
 
     except Exception as e:
         error_details = str(e)
-        if isinstance(e, subprocess.CalledProcessError):
-            error_details = f"Git Command Failed: {e.stderr if e.stderr else e.stdout}"
-        elif isinstance(e, GithubException):
-            error_details = f"GitHub API Error ({e.status}): {e.data}"
-
-        print(f"Error during Git Operations or PR Creation: {error_details}")
-        return {
-            "error": f"Failed during repository operations: {error_details}",
-            "step": "repository_operations"
-        }
+        if isinstance(e, GithubException): error_details = e.data.get('message', str(e))
+        return {"error": f"Operation failed: {error_details}"}
 
 --- FILE_END: backend/lumiere_core/services/ambassador.py ---
 
@@ -5533,240 +5636,121 @@ def dispatch_pr(
 
 import json
 import re
+import traceback
 from pathlib import Path
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, List, Any, Tuple
 
 from . import llm_service
 from .utils import clean_llm_code_output
-from . import code_surgery 
+from . import code_surgery
 
-def _is_valid_json(json_str: str) -> bool:
-    """Helper function to validate JSON strings."""
+# Language-specific configurations
+LANGUAGE_CONFIG = {
+    '.py': { 'name': 'Python' },
+    '.js': { 'name': 'JavaScript' },
+    '.ts': { 'name': 'TypeScript' },
+    '.gs': { 'name': 'Google Apps Script' },
+    '.java': { 'name': 'Java' },
+    '.cpp': { 'name': 'C++' },
+    '.c': { 'name': 'C' },
+    '.go': { 'name': 'Go' },
+    '.rb': { 'name': 'Ruby' },
+    '.php': { 'name': 'PHP' },
+    '.rs': { 'name': 'Rust' },
+}
+
+def _get_language_config(file_path: str) -> Dict[str, Any]:
+    ext = Path(file_path).suffix.lower()
+    return LANGUAGE_CONFIG.get(ext, {'name': 'Unknown'})
+
+def _detect_primary_language(target_files: List[str]) -> Dict[str, Any]:
+    if not target_files:
+        return _get_language_config('')
     try:
-        parsed = json.loads(json_str)
-        return isinstance(parsed, dict) and len(parsed) > 0
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return False
+        ext_counts = {}
+        for fp in target_files:
+            ext = Path(fp).suffix.lower()
+            ext_counts[ext] = ext_counts.get(ext, 0) + 1
+        primary_ext = max(ext_counts, key=ext_counts.get)
+        return _get_language_config(primary_ext)
+    except (ValueError, IndexError):
+        return _get_language_config('')
 
 
 def _extract_json_from_llm(raw_text: str) -> Optional[str]:
-    """
-    Ultra-robust JSON extraction from LLM responses.
-    Tries multiple strategies with extensive pattern matching.
-    """
-
-    # Clean the input text
-    raw_text = raw_text.strip()
-
-    # Strategy 1: Try Markdown JSON code block with comprehensive patterns
-    markdown_patterns = [
-        r"```(?:json|JSON)?\s*(\{.*?\})\s*```",      # Standard markdown
-        r"```(?:json|JSON)?\n(\{.*?\})\n```",        # With newlines
-        r"```(\{.*?\})```",                          # Simple fences
-        r"`(\{.*?\})`",                              # Single backticks
-        r"```(?:json|JSON)?\s*(\{.*?)\s*```",        # Incomplete end brace
-        r"(?i)```json\s*(\{.*?\})\s*```",            # Case insensitive
-    ]
-
-    for pattern in markdown_patterns:
-        matches = re.finditer(pattern, raw_text, re.DOTALL | re.IGNORECASE)
-        for match in matches:
-            json_candidate = match.group(1).strip()
-            if _is_valid_json(json_candidate):
-                return json_candidate
-
-    # Strategy 2: Enhanced bracket counting with multiple attempts
-    json_candidates = []
-    stack = []
-    start_indices = []
-
-    for i, char in enumerate(raw_text):
-        if char == '{':
-            if not stack:
-                start_indices.append(i)
-            stack.append('{')
-        elif char == '}':
-            if stack:
-                stack.pop()
-                if not stack and start_indices:
-                    start_index = start_indices.pop()
-                    json_candidate = raw_text[start_index:i+1]
-                    json_candidates.append(json_candidate)
-
-    # Test all candidates from bracket counting
-    for candidate in json_candidates:
-        if _is_valid_json(candidate):
-            return candidate
-
-    # Strategy 3: Look for file path patterns (more flexible)
-    file_patterns = [
-        r'\{[^{}]*?"[^"]*\.(?:py|js|ts|java|cpp|c|h|html|css|json|yaml|yml|xml|md|txt|go|rb|php|swift|kt|dart|rs|scala|sql)"[^{}]*?:.*?\}',
-        r'\{.*?"[^"]*/"[^"]*\.(?:py|js|ts|java|cpp|c|h|html|css|json|yaml|yml|xml|md|txt|go|rb|php|swift|kt|dart|rs|scala|sql)".*?:.*?\}',
-        r'\{.*?["\'][^"\']*\.(?:py|js|ts|java|cpp|c|h|html|css|json|yaml|yml|xml|md|txt|go|rb|php|swift|kt|dart|rs|scala|sql)["\'].*?:.*?\}',
-    ]
-
-    for pattern in file_patterns:
-        matches = re.finditer(pattern, raw_text, re.DOTALL)
-        for match in matches:
-            json_candidate = match.group(0)
-            if _is_valid_json(json_candidate):
-                return json_candidate
-
-    # Strategy 4: Try to extract from common LLM response patterns
-    response_patterns = [
-        r'(?:Here(?:\'s|s| is)? (?:the )?(?:JSON|json|response|fix|solution|code)?:?\s*)(\{.*?\})',
-        r'(?:Response|Answer|Solution|Fix):\s*(\{.*?\})',
-        r'(\{[^{}]*?["\'][^"\']*\.(?:py|js|ts|java|cpp)["\'][^{}]*?:.*?\})',
-    ]
-
-    for pattern in response_patterns:
-        matches = re.finditer(pattern, raw_text, re.DOTALL | re.IGNORECASE)
-        for match in matches:
-            json_candidate = match.group(1).strip()
-            if _is_valid_json(json_candidate):
-                return json_candidate
-
-    # Strategy 5: Last resort - try to find ANY valid JSON structure
-    # Look for balanced braces and try to extract
-    brace_positions = []
-    for i, char in enumerate(raw_text):
-        if char in '{}':
-            brace_positions.append((i, char))
-
-    # Try different combinations of brace positions
-    for start_pos in range(len(brace_positions)):
-        if brace_positions[start_pos][1] == '{':
-            brace_count = 0
-            for end_pos in range(start_pos, len(brace_positions)):
-                if brace_positions[end_pos][1] == '{':
-                    brace_count += 1
-                elif brace_positions[end_pos][1] == '}':
-                    brace_count -= 1
-                    if brace_count == 0:
-                        start_idx = brace_positions[start_pos][0]
-                        end_idx = brace_positions[end_pos][0] + 1
-                        json_candidate = raw_text[start_idx:end_idx]
-                        if _is_valid_json(json_candidate):
-                            return json_candidate
-                        break
-
-    return None
-
-
-def _sanitize_json_response(json_str: str) -> str:
-    """
-    Comprehensive JSON sanitization to fix common LLM formatting issues.
-    """
-    # Remove common prefixes/suffixes that LLMs add
-    prefixes_to_remove = [
-        "Here's the JSON response:",
-        "Here is the JSON:",
-        "Here's the JSON:",
-        "The JSON object is:",
-        "Response:",
-        "Here's the fix:",
-        "Solution:",
-        "The fix is:",
-        "Here's your fix:",
-        "JSON:",
-        "```json",
-        "```",
-        "Answer:",
-        "Result:",
-    ]
-
-    suffixes_to_remove = [
-        "Let me know if you need any clarification!",
-        "This should fix the issue.",
-        "Hope this helps!",
-        "```",
-        "Let me know if you have any questions.",
-        "Please let me know if you need any modifications.",
-        "This addresses the issue mentioned in the RCA report.",
-    ]
-
-    cleaned = json_str.strip()
-
-    # Remove prefixes (case insensitive)
-    for prefix in prefixes_to_remove:
-        if cleaned.lower().startswith(prefix.lower()):
-            cleaned = cleaned[len(prefix):].strip()
-            break  # Only remove one prefix
-
-    # Remove suffixes (case insensitive)
-    for suffix in suffixes_to_remove:
-        if cleaned.lower().endswith(suffix.lower()):
-            cleaned = cleaned[:-len(suffix)].strip()
-            break  # Only remove one suffix
-
-    # Fix common JSON syntax issues
-    # Replace smart quotes with regular quotes
-    cleaned = cleaned.replace('"', '"').replace('"', '"')
-    cleaned = cleaned.replace(''', "'").replace(''', "'")
-
-    # Replace backticks that might be used as quotes
-    cleaned = cleaned.replace('`', '"')
-
-    # Fix trailing commas (common LLM mistake)
-    cleaned = re.sub(r',(\s*[}\]])', r'\1', cleaned)
-
-    # Fix missing commas between objects/arrays
-    cleaned = re.sub(r'}\s*{', '},{', cleaned)
-    cleaned = re.sub(r']\s*\[', '],[', cleaned)
-
-    # Fix unescaped quotes in strings (basic attempt)
-    # This is tricky, so we'll just try to fix obvious cases
-    cleaned = re.sub(r'([^\\])"([^",:}\]]*)"([^",:}\]]*)"', r'\1"\2\"\3"', cleaned)
-
-    # Fix common spacing issues
-    cleaned = re.sub(r'\s*:\s*', ':', cleaned)
-    cleaned = re.sub(r'\s*,\s*', ',', cleaned)
-
-    # Remove any remaining markdown code block indicators
-    cleaned = re.sub(r'^```[a-zA-Z]*\s*', '', cleaned)
-    cleaned = re.sub(r'\s*```$', '', cleaned)
-
-    return cleaned
-
-
-def _attempt_json_repair(raw_text: str) -> Optional[str]:
-    """
-    Last resort JSON repair for severely malformed responses.
-    Attempts to construct valid JSON from recognizable patterns.
-    """
+    match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', raw_text, re.DOTALL)
+    if match:
+        return match.group(1)
     try:
-        # Look for file path and content patterns
-        file_pattern = r'["\']([^"\']*\.(?:py|js|ts|java|cpp|c|h|html|css|json|yaml|yml|xml|md|txt))["\']'
-        files_found = re.findall(file_pattern, raw_text)
+        start = raw_text.index('[')
+        end = raw_text.rindex(']') + 1
+        return raw_text[start:end]
+    except ValueError:
+        return None
 
-        if not files_found:
-            return None
+def _validate_and_parse_surgical_plan(json_str: str) -> Tuple[Optional[List[Dict]], str]:
+    if not json_str:
+        return None, "AI response was empty or did not contain a JSON object."
+    try:
+        plan = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        return None, f"AI response was not valid JSON. Parser error: {e}"
 
-        # Try to build a JSON structure
-        result = {}
+    if not isinstance(plan, list):
+        return None, f"AI response was not a list of operations. Found type: {type(plan).__name__}."
 
-        # Simple pattern matching for file content
-        for file_path in files_found:
-            # Look for content after the file path
-            content_patterns = [
-                rf'["\']({re.escape(file_path)})["\']:\s*["\']([^"\']*?)["\']',
-                rf'["\']({re.escape(file_path)})["\']:\s*"""([^"]*?)"""',
-                rf'["\']({re.escape(file_path)})["\']:\s*```([^`]*?)```',
-            ]
+    for i, op in enumerate(plan):
+        op_num = i + 1
+        if not isinstance(op, dict):
+            return None, f"Operation #{op_num} is not a valid object."
 
-            for pattern in content_patterns:
-                match = re.search(pattern, raw_text, re.DOTALL)
-                if match:
-                    result[file_path] = match.group(2).strip()
-                    break
+        operation_type = op.get("operation")
+        if not operation_type:
+            return None, f"Operation #{op_num} is missing the required 'operation' field."
 
-        if result:
-            return json.dumps(result)
+        required_fields = {
+            "REPLACE_BLOCK": ["file_path", "target_identifier", "content"],
+            "ADD_FIELD_TO_STRUCT": ["file_path", "target_identifier", "content"],
+            "CREATE_FILE": ["file_path", "content"],
+            "INSERT_CODE_AT": ["file_path", "line_number", "content"],
+        }
+        if operation_type not in required_fields:
+            return None, f"Operation #{op_num} has an unknown operation type: '{operation_type}'."
 
-    except Exception:
-        pass
+        missing = [field for field in required_fields[operation_type] if field not in op]
+        if missing:
+            return None, f"Operation #{op_num} ('{operation_type}') is missing required fields: {', '.join(missing)}."
 
-    return None
+    return plan, ""
+
+def _scout_expand_scope(
+    original_contents: Dict[str, str],
+    surgical_plan: List[Dict],
+    full_file_map: Dict[str, str]
+) -> Dict[str, str]:
+    """
+    The Scout Service.
+    Ensures the file scope matches the AI's plan by loading any missing files.
+    """
+    print("🛰️  Activating Scout: Verifying and expanding file scope...")
+
+    plan_files = {op['file_path'] for op in surgical_plan if 'file_path' in op}
+
+    updated_contents = original_contents.copy()
+    expanded_files_loaded = 0
+
+    for file_path in plan_files:
+        if file_path not in updated_contents:
+            updated_contents[file_path] = full_file_map.get(file_path, "")
+            print(f"  → Scout expanded scope to include: {file_path}")
+            expanded_files_loaded += 1
+
+    if expanded_files_loaded > 0:
+        print(f"✓ Scout successfully expanded scope with {expanded_files_loaded} new file(s).")
+    else:
+        print("✓ File scope is consistent with the AI's plan.")
+
+    return updated_contents
 
 
 def generate_scaffold(
@@ -5778,10 +5762,7 @@ def generate_scaffold(
     refinement_history: Optional[List[Dict[str, str]]] = None
 ) -> Dict[str, Any]:
     """
-    Core logic for Code Scaffolding using the new "Surgical" Two-Step method.
-
-    Returns:
-        Dict containing either success data or error information
+    Core logic for Code Scaffolding with Dynamic Scope Expansion.
     """
     print(f"🔧 Initiating Surgical Scaffolding for {target_files} in repo '{repo_id}'")
 
@@ -5789,200 +5770,147 @@ def generate_scaffold(
         # --- SETUP AND VALIDATION ---
         backend_dir = Path(__file__).resolve().parent.parent.parent
         cortex_path = backend_dir / "cloned_repositories" / repo_id / f"{repo_id}_cortex.json"
-
         if not cortex_path.exists():
-            return {
-                "error": "Cortex file not found",
-                "details": f"Expected path: {cortex_path}"
-            }
+            return {"error": "Cortex file not found", "details": f"Expected path: {cortex_path}"}
 
-        # Load cortex data
-        try:
-            with open(cortex_path, 'r', encoding='utf-8') as f:
-                cortex_data = json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
-            return {
-                "error": "Failed to load cortex file",
-                "details": str(e)
-            }
+        with open(cortex_path, 'r', encoding='utf-8') as f:
+            cortex_data = json.load(f)
 
-        # Build file map and validate target files
         file_map = {file['file_path']: file['raw_content'] for file in cortex_data.get('files', [])}
-        original_contents = {}
-        missing_files = []
+        original_contents = {fp: file_map.get(fp, "") for fp in target_files}
 
-        for fp in target_files:
-            if fp in file_map and file_map[fp]:
-                original_contents[fp] = file_map[fp]
-            else:
-                missing_files.append(fp)
+        print(f"✓ Loaded {len(target_files)} initial target files.")
+        language_config = _detect_primary_language(target_files)
+        print(f"📝 Detected primary language: {language_config['name']}")
 
-        if missing_files:
-            return {
-                "error": "Some target files not found in cortex",
-                "missing_files": missing_files,
-                "available_files": list(file_map.keys())
-            }
+        # --- STEP 1: GENERATE THE SURGICAL PLAN ---
+        print("📝 Step 1: Generating surgical plan...")
 
-        if not original_contents:
-            return {
-                "error": "No valid target files found",
-                "target_files": target_files
-            }
-
-        print(f"✓ Loaded {len(original_contents)} target files")
-
-        # --- STEP 1: GENERATE THE SNIPPETS ---
-        print("📝 Step 1: Generating function snippets...")
-
-        # Build relevant code section
         file_content_prompt_section = "\n\n### RELEVANT EXISTING CODE\n"
         for path, content in original_contents.items():
-            if path.endswith(('.js', '.gs', '.ts')):
-                # Use the improved function from code_surgery
-                compressed_content = code_surgery.get_relevant_code_from_cortex(content, rca_report)
+            if content:
+                compressed_content = code_surgery.get_relevant_code_from_cortex(content, rca_report, path)
                 file_content_prompt_section += f"<file path=\"{path}\">\n{compressed_content}\n</file>\n\n"
 
-        # Build refinement context
         refinement_context = ""
         if refinement_history:
             refinement_context = "\n\n### PREVIOUS REFINEMENT ATTEMPTS\n"
-            for i, refinement in enumerate(refinement_history[-3:]):  # Last 3 attempts
-                refinement_context += f"Attempt {i+1}: {refinement.get('issue', 'Unknown issue')}\n"
-            refinement_context += "\nPlease avoid these previous issues in your response.\n"
+            for i, refinement in enumerate(refinement_history[-2:]):
+                feedback = refinement.get("feedback", "No feedback provided.")
+                refinement_context += f"Attempt {i+1} Feedback: {feedback}\n"
+            refinement_context += "\nPlease learn from the previous feedback and generate a better plan.\n"
 
-        snippet_prompt = f"""You are a code generation expert specializing in Google Apps Script and JavaScript.
-
-<Instructions>
-1. Read the <Goal> and <RCA_Report> carefully.
-2. Based on the <RELEVANT_EXISTING_CODE>, identify and rewrite ONLY the functions that need to be changed.
-3. Your response MUST be a single, valid JSON object with no additional text.
-4. The keys of the JSON object MUST be the full file paths (e.g., "UtilityFunctions.gs").
-5. The values MUST be JSON objects where keys are function names and values are the complete, new code for JUST THAT FUNCTION.
-6. Preserve existing function signatures unless specifically required to change them.
-7. Ensure all functions are syntactically correct and complete.
-8. Include proper error handling and logging where appropriate.
-</Instructions>
-
-<Example_Response_Format>
-{{
-  "UtilityFunctions.gs": {{
-    "setupWelcomeSheet": "function setupWelcomeSheet(ss) {{\\n  // New implementation\\n  try {{\\n    // ... code ...\\n  }} catch (error) {{\\n    console.error('Error in setupWelcomeSheet:', error);\\n    throw error;\\n  }}\\n}}",
-    "getConfigMap": "function getConfigMap() {{\\n  // New implementation\\n  return {{}};\\n}}"
-  }},
-  "Code.gs": {{
-    "onOpen": "function onOpen(e) {{\\n  // New implementation\\n}}"
-  }}
-}}
-</Example_Response_Format>
+        surgical_prompt = f"""You are an expert software architect specializing in {language_config['name']}. Your task is to generate a precise surgical plan to fix a bug.
 
 <Goal>{instruction}</Goal>
-
 <RCA_Report>{rca_report}</RCA_Report>
 {refinement_context}
 {file_content_prompt_section}
 
-Generate the JSON object containing only the modified function snippets now:"""
+### YOUR TASK ###
+Based on all the provided information, create a step-by-step surgical plan as a JSON array.
 
-        # Generate snippets with retry logic
+### AVAILABLE OPERATIONS ###
+You can use the following operations in your plan:
+1.  `"operation": "CREATE_FILE"`: Creates a new file.
+    - Required fields: `file_path`, `content`.
+2.  `"operation": "REPLACE_BLOCK"`: Replaces an entire function, method, class, or other code block.
+    - Required fields: `file_path`, `target_identifier` (the unique name/signature of the block to replace), `content`.
+3.  `"operation": "ADD_FIELD_TO_STRUCT"`: (For Rust/C/Go) Adds a new field to a struct.
+    - Required fields: `file_path`, `target_identifier` (the name of the struct), `content` (the line(s) for the new field).
+
+### RESPONSE FORMAT ###
+- You MUST respond with ONLY a valid JSON array `[...]`.
+- Do not include any explanations, markdown fences, or other text.
+- If the AI needs to modify a file not in the provided context, it should add an operation for that file. The tool will handle loading it.
+
+<Example_Response_Format>
+```json
+[
+  {{
+    "operation": "ADD_FIELD_TO_STRUCT",
+    "file_path": "src/config/mod.rs",
+    "target_identifier": "ConfigFile",
+    "content": "    pub autoplay: bool,"
+  }},
+  {{
+    "operation": "REPLACE_BLOCK",
+    "file_path": "src/player.rs",
+    "target_identifier": "play_next_song",
+    "content": "pub fn play_next_song(config: &Config) {{\\n    if config.autoplay {{\\n        // new logic here...\\n    }}\\n}}"
+  }}
+]
+</Example_Response_Format>
+Generate the surgical plan now.
+"""
         max_retries = 3
+        surgical_plan = None
+        last_llm_response = ""
+
         for attempt in range(max_retries):
-            try:
-                print(f"  🤖 Attempt {attempt + 1}: Calling LLM...")
-                llm_response = llm_service.generate_text(snippet_prompt, model_identifier)
+            print(f"  🤖 Attempt {attempt + 1}: Calling LLM for surgical plan...")
+            llm_response = llm_service.generate_text(surgical_prompt, model_identifier)
+            last_llm_response = llm_response
 
-                if not llm_response or not llm_response.strip():
-                    if attempt < max_retries - 1:
-                        print(f"  ⚠️ Empty response, retrying...")
-                        continue
-                    return {
-                        "error": "LLM returned empty response after all retries",
-                        "attempts": max_retries
-                    }
+            if not llm_response or not llm_response.strip():
+                print("  ⚠️ Empty response, retrying...")
+                continue
 
-                # Use improved validation from code_surgery
-                changed_snippets_data, error_msg = code_surgery.validate_and_parse_snippets(llm_response)
-
-                if changed_snippets_data:
-                    print(f"  ✓ Successfully parsed {len(changed_snippets_data)} file(s) with snippets")
+            json_str = _extract_json_from_llm(llm_response)
+            if json_str:
+                plan, error_msg = _validate_and_parse_surgical_plan(json_str)
+                if plan:
+                    surgical_plan = plan
+                    print(f"  ✓ Successfully parsed surgical plan with {len(plan)} operations.")
                     break
                 else:
-                    print(f"  ⚠️ Attempt {attempt + 1} failed: {error_msg}")
-                    if attempt < max_retries - 1:
-                        continue
+                    print(f"  ❌ Blueprint Rejected (Attempt {attempt+1}/{max_retries}): {error_msg}")
+                    print(f"  📝 Faulty JSON received: {json_str[:250]}...")
+            else:
+                print(f"  ❌ Could not extract JSON from LLM response (Attempt {attempt+1}/{max_retries}).")
 
-                    return {
-                        "error": f"Failed to generate valid snippets after {max_retries} attempts",
-                        "last_error": error_msg,
-                        "llm_response": llm_response[:500] + "..." if len(llm_response) > 500 else llm_response
-                    }
+        if not surgical_plan:
+            return {
+                "error": f"Failed to generate a valid surgical plan after {max_retries} attempts.",
+                "details": "The AI's final proposed plan was malformed or incomplete. Please review the raw response for clues.",
+                "llm_response": last_llm_response,
+            }
 
-            except Exception as e:
-                print(f"  ❌ Attempt {attempt + 1} error: {str(e)}")
-                if attempt < max_retries - 1:
-                    continue
-
-                return {
-                    "error": f"Exception during snippet generation: {str(e)}",
-                    "attempts": max_retries
-                }
+        # --- The Scout Service is called here ---
+        final_contents_for_surgery = _scout_expand_scope(
+            original_contents,
+            surgical_plan,
+            file_map
+        )
 
         # --- STEP 2: PERFORM THE CODE SURGERY ---
-        print("🔬 Step 2: Performing code surgery...")
+        print("🔬 Step 2: Dispatching plan to Code Surgery agent...")
 
-        final_modified_files = {}
-        surgery_errors = []
+        modified_files, surgery_report = code_surgery.execute_surgical_plan(
+            final_contents_for_surgery,
+            surgical_plan
+        )
 
-        for file_path, snippets in changed_snippets_data.items():
-            if file_path in original_contents:
-                print(f"  🔧 Operating on {file_path}...")
-                try:
-                    modified_content = code_surgery.replace_functions_in_file(
-                        original_contents[file_path],
-                        snippets
-                    )
-                    final_modified_files[file_path] = modified_content
-                    print(f"  ✓ Successfully modified {file_path}")
+        if surgery_report.get("errors"):
+            return {
+                "error": "Code Surgery failed to apply the plan.",
+                "details": surgery_report["errors"]
+            }
 
-                except Exception as e:
-                    error_msg = f"Surgery failed for {file_path}: {str(e)}"
-                    surgery_errors.append(error_msg)
-                    print(f"  ❌ {error_msg}")
-                    # Keep the original content as fallback
-                    final_modified_files[file_path] = original_contents[file_path]
-            else:
-                warning_msg = f"LLM generated snippets for untracked file: {file_path}"
-                surgery_errors.append(warning_msg)
-                print(f"  ⚠️ {warning_msg}")
-
-        # Ensure we have results for all target files
-        for file_path in target_files:
-            if file_path not in final_modified_files:
-                final_modified_files[file_path] = original_contents[file_path]
-
-        result = {
-            "modified_files": final_modified_files,
-            "original_contents": original_contents,
-            "snippets_generated": changed_snippets_data,
-            "files_modified": len(final_modified_files),
-            "functions_targeted": sum(len(snippets) for snippets in changed_snippets_data.values())
+        print("🎉 Surgical scaffolding completed successfully!")
+        return {
+            "modified_files": modified_files,
+            "original_contents": final_contents_for_surgery, # Return the expanded set
+            "plan_executed": surgical_plan,
+            "surgery_report": surgery_report,
         }
-
-        if surgery_errors:
-            result["warnings"] = surgery_errors
-
-        print(f"🎉 Surgical scaffolding completed successfully!")
-        print(f"   Files processed: {len(final_modified_files)}")
-        print(f"   Functions targeted: {result['functions_targeted']}")
-
-        return result
 
     except Exception as e:
         print(f"❌ Critical error in generate_scaffold: {str(e)}")
         return {
-            "error": "Critical error in generate_scaffold",
+            "error": "A critical error occurred in the scaffolding service.",
             "details": str(e),
-            "traceback": str(e.__traceback__) if hasattr(e, '__traceback__') else None
+            "traceback": traceback.format_exc(),
         }
 
 --- FILE_END: backend/lumiere_core/services/scaffolding.py ---
@@ -6327,8 +6255,12 @@ def list_models() -> List[Dict[str, str]]:
 
 import os
 import uuid
+import json
+import time
 from pathlib import Path
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, List
+from dataclasses import dataclass, asdict
+from datetime import datetime
 
 import docker
 from docker.errors import BuildError, ContainerError, APIError, DockerException
@@ -6336,105 +6268,367 @@ from docker.errors import BuildError, ContainerError, APIError, DockerException
 from .utils import clean_llm_code_output
 from ingestion.crawler import IntelligentCrawler
 
-# --- Environment Detection Helpers ---
-def _detect_dependencies(repo_path: Path) -> Tuple[str, str]:
-    print("   -> Detecting dependency file...")
-    if (repo_path / "requirements.txt").exists():
-        print("      - Found requirements.txt")
-        return "pip install -r requirements.txt", "requirements.txt"
-    if (repo_path / "pyproject.toml").exists():
-        print("      - Found pyproject.toml (assuming standard PEP 517 build)")
-        return "pip install .", "pyproject.toml"
-    print("      - No dependency file found. Assuming no special dependencies.")
-    return "echo 'No dependencies to install'", ""
+# --- Enhanced Data Structures ---
+@dataclass
+class ValidationResult:
+    """Enhanced result structure with detailed metrics"""
+    status: str
+    logs: str
+    execution_time: float = 0.0
+    build_time: float = 0.0
+    test_time: float = 0.0
+    project_type: str = "unknown"
+    image_size: Optional[int] = None
+    warnings: List[str] = None
 
-def _detect_test_runner(repo_path: Path) -> str:
-    print("   -> Detecting test runner...")
-    if (repo_path / "pytest.ini").exists() or (repo_path / "tox.ini").exists():
-        print("      - Found pytest.ini or tox.ini. Using 'pytest'.")
-        return "pytest"
-    if (repo_path / "tests").is_dir() or (repo_path / "test").is_dir():
-        print("      - Found 'tests' directory. Assuming 'pytest'.")
-        return "pytest"
-    print("      - No specific test runner found. Falling back to 'python -m unittest discover'.")
-    return "python -m unittest discover"
+    def __post_init__(self):
+        if self.warnings is None:
+            self.warnings = []
 
-def _generate_dockerfile(install_command: str, dependency_file_path: str, test_command: str) -> str:
+    def to_dict(self) -> Dict:
+        """Convert to dictionary for backward compatibility"""
+        result = {"status": self.status, "logs": self.logs}
+        # Add enhanced fields only if they have meaningful values
+        if self.execution_time > 0:
+            result["execution_time"] = self.execution_time
+        if self.build_time > 0:
+            result["build_time"] = self.build_time
+        if self.test_time > 0:
+            result["test_time"] = self.test_time
+        if self.project_type != "unknown":
+            result["project_type"] = self.project_type
+        if self.image_size:
+            result["image_size_mb"] = round(self.image_size / (1024 * 1024), 2)
+        if self.warnings:
+            result["warnings"] = self.warnings
+        return result
+
+# --- Environment Detection Helpers (Enhanced) ---
+def _detect_project_type(repo_path: Path) -> str:
+    """Detects the project type based on key files with enhanced detection."""
+    # Rust detection
+    if (repo_path / "Cargo.toml").exists():
+        return "rust"
+
+    # Python detection (enhanced)
+    python_indicators = [
+        "requirements.txt", "pyproject.toml", "setup.py", "Pipfile",
+        "poetry.lock", "conda.yml", "environment.yml"
+    ]
+    if any((repo_path / indicator).exists() for indicator in python_indicators):
+        return "python"
+
+    # Node.js detection (new)
+    if (repo_path / "package.json").exists():
+        return "node"
+
+    # Java detection (new)
+    java_indicators = ["pom.xml", "build.gradle", "build.gradle.kts"]
+    if any((repo_path / indicator).exists() for indicator in java_indicators):
+        return "java"
+
+    # Go detection (new)
+    if (repo_path / "go.mod").exists():
+        return "go"
+
+    # Generic detection based on file extensions
+    code_files = list(repo_path.rglob("*.py"))
+    if code_files:
+        return "python"
+
+    code_files = list(repo_path.rglob("*.js")) + list(repo_path.rglob("*.ts"))
+    if code_files:
+        return "node"
+
+    code_files = list(repo_path.rglob("*.java"))
+    if code_files:
+        return "java"
+
+    code_files = list(repo_path.rglob("*.go"))
+    if code_files:
+        return "go"
+
+    return "unknown"
+
+def _get_project_commands(project_type: str, repo_path: Path) -> Tuple[str, str, str, Optional[str]]:
+    """Returns install command, test command, base image, and dependency file path."""
+    print(f"   -> Detected project type: {project_type}")
+
+    if project_type == "rust":
+        return "cargo build --release", "cargo test --release", "rust:latest", "Cargo.toml"
+
+    # --- Enhanced Python Logic ---
+    if project_type == "python":
+        install_cmd, dep_file = "echo 'No dependencies to install'", None
+
+        # Priority order for Python dependency management
+        if (repo_path / "poetry.lock").exists():
+            install_cmd, dep_file = "pip install poetry && poetry install", "pyproject.toml"
+        elif (repo_path / "Pipfile").exists():
+            install_cmd, dep_file = "pip install pipenv && pipenv install", "Pipfile"
+        elif (repo_path / "requirements.txt").exists():
+            install_cmd, dep_file = "pip install -r requirements.txt", "requirements.txt"
+        elif (repo_path / "pyproject.toml").exists():
+            install_cmd, dep_file = "pip install .", "pyproject.toml"
+        elif (repo_path / "setup.py").exists():
+            install_cmd, dep_file = "pip install -e .", "setup.py"
+
+        # Enhanced test command detection
+        test_cmd = "python -m unittest discover"
+        if (repo_path / "pytest.ini").exists() or (repo_path / "pyproject.toml").exists():
+            test_cmd = "pytest"
+        elif (repo_path / "tox.ini").exists():
+            test_cmd = "tox"
+        elif (repo_path / "tests").is_dir() or (repo_path / "test").is_dir():
+            test_cmd = "pytest" if any(repo_path.rglob("test_*.py")) else "python -m unittest discover"
+
+        return install_cmd, test_cmd, "python:3.11-slim", dep_file
+
+    # --- New Node.js Support ---
+    if project_type == "node":
+        install_cmd = "npm install"
+        if (repo_path / "yarn.lock").exists():
+            install_cmd = "yarn install"
+        elif (repo_path / "pnpm-lock.yaml").exists():
+            install_cmd = "pnpm install"
+
+        test_cmd = "npm test"
+        if (repo_path / "yarn.lock").exists():
+            test_cmd = "yarn test"
+        elif (repo_path / "pnpm-lock.yaml").exists():
+            test_cmd = "pnpm test"
+
+        return install_cmd, test_cmd, "node:18-alpine", "package.json"
+
+    # --- New Java Support ---
+    if project_type == "java":
+        if (repo_path / "pom.xml").exists():
+            return "mvn compile", "mvn test", "openjdk:17-jdk-slim", "pom.xml"
+        elif (repo_path / "build.gradle").exists() or (repo_path / "build.gradle.kts").exists():
+            return "./gradlew build", "./gradlew test", "openjdk:17-jdk-slim", "build.gradle"
+
+    # --- New Go Support ---
+    if project_type == "go":
+        return "go mod download", "go test ./...", "golang:1.21-alpine", "go.mod"
+
+    # Fallback for unknown project types
+    return "echo 'Unknown project type, cannot install dependencies'", "echo 'No test runner found'", "alpine:latest", None
+
+def _generate_dockerfile(install_command: str, test_command: str, base_image: str,
+                        project_type: str = "unknown") -> str:
+    """
+    Generate optimized Dockerfile with caching and security improvements.
+    """
     print("   -> Generating dynamic Dockerfile...")
-    dockerfile_content = f"""
-FROM python:3.10-slim
-WORKDIR /app
-COPY . /app
-"""
-    if dependency_file_path:
-        dockerfile_content += f"RUN {install_command}\n"
-    dockerfile_content += f"CMD {test_command}\n"
-    print("      - Dockerfile generated successfully.")
+
+    # Base dockerfile with common optimizations
+    dockerfile_content = f"FROM {base_image}\n"
+    dockerfile_content += "WORKDIR /app\n"
+    # Security: Create a non-root user. The specific command depends on the base image (alpine vs debian)
+    # Using a generic adduser should work for most.
+    dockerfile_content += "RUN adduser -D -h /app appuser && chown -R appuser /app\n\n"
+
+    # --- THIS IS THE CRITICAL CHANGE: COPY CODE FIRST ---
+    # Copy the entire project context into the build environment.
+    dockerfile_content += "# Copy source code\n"
+    dockerfile_content += "COPY . /app/\n\n"
+
+    # Now, run the install command with the code present.
+    # We add 'chown' for cases where dependencies create root-owned files (like node_modules)
+    dockerfile_content += f"# Install dependencies\n"
+    dockerfile_content += f"RUN {install_command} && chown -R appuser:appuser /app\n\n"
+
+    # Switch to the non-root user for running tests
+    dockerfile_content += "# Switch to non-root user for security\n"
+    dockerfile_content += "USER appuser\n\n"
+
+    # The final command to run is the test command
+    # Use exec form to handle signals correctly
+    cmd_parts = test_command.split()
+    cmd_json = ', '.join([f'"{part}"' for part in cmd_parts])
+    dockerfile_content += f"# Run tests\n"
+    dockerfile_content += f"CMD [{cmd_json}]\n"
+
+    print("      - Dockerfile generated successfully with corrected build order.")
     return dockerfile_content
 
-# --- Main Service Orchestrator ---
-def validate_fix(repo_url: str, target_file: str, modified_code: str) -> Dict[str, str]:
+def _analyze_dockerfile_warnings(repo_path: Path, project_type: str) -> List[str]:
+    """Analyze potential issues and generate warnings."""
+    warnings = []
+
+    # Check for common security issues
+    if project_type == "python":
+        req_file = repo_path / "requirements.txt"
+        if req_file.exists():
+            content = req_file.read_text()
+            if "==" not in content and ">=" not in content:
+                warnings.append("Consider pinning Python package versions for reproducible builds")
+
+    # Check for large files that might slow down builds
+    large_files = []
+    for file_path in repo_path.rglob("*"):
+        if file_path.is_file() and file_path.stat().st_size > 50 * 1024 * 1024:  # 50MB
+            large_files.append(file_path.name)
+
+    if large_files:
+        warnings.append(f"Large files detected that may slow builds: {', '.join(large_files[:3])}")
+
+    # Check for missing .dockerignore
+    if not (repo_path / ".dockerignore").exists():
+        warnings.append("Consider adding .dockerignore to exclude unnecessary files from Docker context")
+
+    return warnings
+
+# --- Enhanced Main Service Orchestrator ---
+def validate_fix(repo_url: str, target_file: str, modified_code: str,
+                 enhanced_output: bool = False) -> Dict[str, str]:
     """
-    The main logic for The Crucible agent.
+    The main logic for The Crucible agent with enhanced features.
+
+    Args:
+        repo_url: Repository URL to validate
+        target_file: Target file path to modify
+        modified_code: Modified code content
+        enhanced_output: Whether to return enhanced output with metrics (backward compatible)
+
+    Returns:
+        Dictionary with validation results (backward compatible format by default)
     """
     print("\n--- CRUCIBLE AGENT ACTIVATED ---")
     print(f"Validating fix for '{target_file}' in '{repo_url}'")
 
-    # ** THE FIX **: Add a top-level try/except to catch the Docker connection error.
+    start_time = time.time()
+    result = ValidationResult(status="error", logs="Initialization failed")
+
     try:
         client = docker.from_env()
-        # Ping the docker daemon to ensure it's running before we do anything else
         client.ping()
         print("✓ Successfully connected to Docker daemon.")
     except DockerException:
         error_msg = "Crucible Error: Could not connect to the Docker daemon. Please ensure Docker Desktop is running."
         print(f"✗ {error_msg}")
-        return {"status": "error", "logs": error_msg}
+        result.logs = error_msg
+        return result.to_dict() if enhanced_output else {"status": result.status, "logs": result.logs}
 
     with IntelligentCrawler(repo_url=repo_url) as crawler:
         repo_path = crawler.repo_path
-        print("[Step 1/5] Patching file in local clone...")
+        print("[Step 1/6] Patching file in local clone...")
         full_target_path = repo_path / target_file
         if not full_target_path.exists():
-            return {"status": "error", "logs": f"Crucible Error: Target file '{target_file}' not found."}
+            full_target_path.parent.mkdir(parents=True, exist_ok=True)
         full_target_path.write_text(modified_code, encoding='utf-8')
         print("✓ File patched.")
 
-        print("[Step 2/5] Analyzing project environment...")
-        install_cmd, dep_file = _detect_dependencies(repo_path)
-        test_cmd = _detect_test_runner(repo_path)
-        dockerfile_str = _generate_dockerfile(install_cmd, dep_file, test_cmd)
+        print("[Step 2/6] Analyzing project environment...")
+        project_type = _detect_project_type(repo_path)
+        result.project_type = project_type
+        install_cmd, test_cmd, base_image, _ = _get_project_commands(project_type, repo_path)
+
+        # Generate warnings
+        result.warnings = _analyze_dockerfile_warnings(repo_path, project_type)
+
+        dockerfile_str = _generate_dockerfile(install_cmd, test_cmd, base_image, project_type)
         (repo_path / "Dockerfile.lumiere").write_text(dockerfile_str, encoding='utf-8')
         print("✓ Environment analysis complete.")
 
-        print("[Step 3/5] Building validation image...")
+        print("[Step 3/6] Building validation image...")
+        build_start = time.time()
         image_tag = f"lumiere-crucible/{uuid.uuid4()}"
         image = None
         try:
-            image, build_logs = client.images.build(path=str(repo_path), dockerfile="Dockerfile.lumiere", tag=image_tag, rm=True, forcerm=True)
-            print(f"✓ Image '{image_tag}' built.")
+            image, build_logs = client.images.build(
+                path=str(repo_path),
+                dockerfile="Dockerfile.lumiere",
+                tag=image_tag,
+                rm=True,
+                forcerm=True,
+                pull=True  # Ensure base image is up to date
+            )
+            result.build_time = time.time() - build_start
+            result.image_size = image.attrs.get('Size', 0)
+            print(f"✓ Image '{image_tag}' built in {result.build_time:.2f}s")
         except BuildError as e:
             print(f"✗ Build Failed: {e}")
-            logs = "\n".join([log.get('stream', '').strip() for log in e.build_log])
-            return {"status": "failed", "logs": f"Docker image build failed:\n{logs}"}
+            logs = "\n".join([log.get('stream', '').strip() for log in e.build_log if 'stream' in log])
+            result.status = "failed"
+            result.logs = f"Docker image build failed:\n{logs}"
+            result.execution_time = time.time() - start_time
+            return result.to_dict() if enhanced_output else {"status": result.status, "logs": result.logs}
 
         try:
-            print(f"[Step 4/5] Running tests in container from image '{image_tag}'...")
-            container_output = client.containers.run(image_tag, remove=True)
-            print("✓ Tests PASSED.")
-            return {"status": "passed", "logs": container_output.decode('utf-8')}
+            print(f"[Step 4/6] Running tests in container from image '{image_tag}'...")
+            test_start = time.time()
+
+            # Enhanced container run with resource limits
+            container_output = client.containers.run(
+                image_tag,
+                remove=True,
+                mem_limit="1g",  # Limit memory usage
+                cpu_count=2,     # Limit CPU usage
+                network_disabled=True  # Disable network for security
+            )
+
+            result.test_time = time.time() - test_start
+            print(f"✓ Tests PASSED in {result.test_time:.2f}s")
+            result.status = "passed"
+            result.logs = container_output.decode('utf-8')
+
         except ContainerError as e:
+            result.test_time = time.time() - test_start if 'test_start' in locals() else 0
             print(f"✗ Tests FAILED. Exit code: {e.exit_status}")
             logs = e.stderr.decode('utf-8') if e.stderr else e.stdout.decode('utf-8')
-            return {"status": "failed", "logs": logs}
-        finally:
-            print("[Step 5/5] Cleaning up validation image...")
-            if image:
-                try: client.images.remove(image.id, force=True); print(f"✓ Image '{image_tag}' removed.")
-                except APIError as e: print(f"Warning: Could not remove image '{image_tag}'. Error: {e}")
+            result.status = "failed"
+            result.logs = logs
 
+        finally:
+            print("[Step 5/6] Cleaning up validation image...")
+            if image:
+                try:
+                    client.images.remove(image.id, force=True)
+                    print(f"✓ Image '{image_tag}' removed.")
+                except APIError as e:
+                    print(f"Warning: Could not remove image '{image_tag}'. Error: {e}")
+                    result.warnings.append(f"Failed to cleanup image: {image_tag}")
+
+    result.execution_time = time.time() - start_time
+    print(f"[Step 6/6] Validation completed in {result.execution_time:.2f}s")
     print("--- CRUCIBLE AGENT MISSION COMPLETE ---")
-    return {"status": "error", "logs": "Crucible process completed without a definitive pass/fail result."}
+
+    # Return backward compatible format by default
+    if enhanced_output:
+        return result.to_dict()
+    else:
+        return {"status": result.status, "logs": result.logs}
+
+# --- Backward Compatibility Aliases ---
+def crucible_validate(repo_url: str, target_file: str, modified_code: str) -> Dict[str, str]:
+    """Backward compatibility alias for validate_fix"""
+    return validate_fix(repo_url, target_file, modified_code)
+
+# --- Enhanced API Functions ---
+def validate_fix_enhanced(repo_url: str, target_file: str, modified_code: str) -> Dict:
+    """Enhanced version that returns detailed metrics and warnings"""
+    return validate_fix(repo_url, target_file, modified_code, enhanced_output=True)
+
+def get_supported_project_types() -> List[str]:
+    """Returns list of supported project types"""
+    return ["python", "rust", "node", "java", "go"]
+
+def analyze_project(repo_url: str) -> Dict[str, str]:
+    """Analyze project type and structure without running tests"""
+    with IntelligentCrawler(repo_url=repo_url) as crawler:
+        repo_path = crawler.repo_path
+        project_type = _detect_project_type(repo_path)
+        install_cmd, test_cmd, base_image, dep_file = _get_project_commands(project_type, repo_path)
+
+        return {
+            "project_type": project_type,
+            "install_command": install_cmd,
+            "test_command": test_cmd,
+            "base_image": base_image,
+            "dependency_file": dep_file,
+            "supported": project_type in get_supported_project_types()
+        }
 
 --- FILE_END: backend/lumiere_core/services/crucible.py ---
 
