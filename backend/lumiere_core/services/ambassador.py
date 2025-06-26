@@ -11,7 +11,9 @@ from dotenv import load_dotenv
 from github import Github, GithubException
 
 from .github import scrape_github_issue, _parse_github_issue_url
+
 from . import llm_service
+from .llm_service import TaskType
 from ingestion.crawler import IntelligentCrawler
 
 # --- Configuration ---
@@ -151,18 +153,15 @@ This PR modifies **{len(modified_files)}** file(s) to resolve the issue:
 def dispatch_pr(
     issue_url: str,
     modified_files: Dict[str, str],
-    model_identifier: str,
     custom_commit_message: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Orchestrates the git operations and PR creation for a multi-file change set.
     """
     print("--- AMBASSADOR AGENT ACTIVATED (MULTI-FILE MODE) ---")
-
     validation_errors = _validate_file_changes(modified_files)
     if validation_errors:
         return {"error": f"Validation failed: {'; '.join(validation_errors)}"}
-
     print("\n[Step 1/4] Gathering Intel...")
     try:
         issue_data = scrape_github_issue(issue_url)
@@ -173,7 +172,6 @@ def dispatch_pr(
         repo_full_name = f"{owner}/{repo_name}"
     except Exception as e:
         return {"error": f"Intel gathering failed: {e}"}
-
     print("\n[Step 2/4] Preparing Repository...")
     try:
         upstream_repo = g.get_repo(repo_full_name)
@@ -184,47 +182,45 @@ def dispatch_pr(
         except GithubException:
             print("Creating fork...")
             working_repo = upstream_repo.create_fork()
-            time.sleep(15) # Wait for fork to be ready
-
+            time.sleep(15)
         with IntelligentCrawler(repo_url=working_repo.clone_url) as crawler:
             repo_path = crawler.repo_path
             branch_name = f"lumiere-fix/{issue_number}-{_sanitize_branch_name(issue_data['title'])}"
             default_branch = upstream_repo.default_branch
-
             print(f"\n[Step 3/4] Applying Fix on new branch '{branch_name}'...")
             if not _run_git_command(['git', 'checkout', default_branch], repo_path, f"Switched to {default_branch}"):
                 return {"error": "Failed to checkout default branch"}
             if not _run_git_command(['git', 'pull', upstream_repo.clone_url, default_branch], repo_path, f"Pulled latest from upstream {default_branch}"):
                  return {"error": "Failed to pull latest upstream changes"}
             if not _run_git_command(['git', 'checkout', '-b', branch_name], repo_path, f"Created branch {branch_name}"):
-                _run_git_command(['git', 'checkout', branch_name], repo_path, f"Switched to existing branch {branch_name}") # If branch exists
-
+                _run_git_command(['git', 'checkout', branch_name], repo_path, f"Switched to existing branch {branch_name}")
             successfully_written = _write_files_safely(repo_path, modified_files)
             if not successfully_written:
                 return {"error": "No files were successfully written"}
-
             if custom_commit_message:
                 commit_message = custom_commit_message
             else:
-                commit_prompt = f"""Based on the issue title '{issue_data['title']}' and the following files being modified: {', '.join(successfully_written)}, write a concise, one-line commit message following the Conventional Commits specification (e.g., 'fix: ...', 'feat: ...'). Output ONLY the commit message line."""
-                commit_message = llm_service.generate_text(commit_prompt, model_identifier=model_identifier).strip()
+                commit_prompt = f"Based on the issue title '{issue_data['title']}' and modified files: {', '.join(successfully_written)}, write a concise one-line Conventional Commits message. Output ONLY the message line."
+
+                # --- THE CHANGE IS HERE ---
+                commit_message = llm_service.generate_text(
+                    commit_prompt,
+                    task_type=TaskType.SIMPLE
+                ).strip()
 
             if not _run_git_command(['git', 'commit', '-m', commit_message], repo_path, "Committed changes"):
                 return {"error": "Failed to commit changes. Nothing to commit or git error."}
             if not _run_git_command(['git', 'push', '--set-upstream', 'origin', branch_name, '--force'], repo_path, "Pushed branch"):
                 return {"error": "Failed to push branch"}
-
             print("\n[Step 4/4] Creating Pull Request...")
             pr_title = f"fix: {issue_data['title']} (resolves #{issue_number})"
             pr_body = _generate_pr_body(issue_data, issue_number, successfully_written)
             head_branch = f"{working_repo.owner.login}:{branch_name}"
-
             pull_request = upstream_repo.create_pull(
                 title=pr_title, body=pr_body, head=head_branch, base=default_branch
             )
             print(f"✓ Pull Request created: {pull_request.html_url}")
             return {"status": "success", "pull_request_url": pull_request.html_url}
-
     except Exception as e:
         error_details = str(e)
         if isinstance(e, GithubException): error_details = e.data.get('message', str(e))

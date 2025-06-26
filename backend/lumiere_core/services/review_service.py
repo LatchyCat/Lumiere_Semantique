@@ -1,144 +1,173 @@
-# In lumiere_core/services/review_service.py
-import uuid
-import tempfile
-import subprocess
+# backend/lumiere_core/services/review_service.py
+
+import logging
+import json
 from pathlib import Path
-from typing import Dict, Optional, List
 
-from .ollama_service import generate_text
+from . import (
+    github, llm_service, graph_differ, oracle_service, cartographer,
+    diff_parser, scaffolding
+)
+from .llm_service import TaskType
+from ingestion.crawler import IntelligentCrawler
+from ingestion.jsonifier import Jsonifier
 
-# This is a simple in-memory cache for our development server.
-REVIEW_ENVIRONMENTS = {}
+logger = logging.getLogger(__name__)
 
-def _resolve_git_ref(repo_path: Path, ref_name: str) -> Optional[str]:
+def _generate_graph_for_ref(crawler: IntelligentCrawler) -> dict:
+    """Helper function to generate a full architectural graph for the current state of the crawler."""
+    files_to_process = crawler.get_file_paths()
+    if not files_to_process:
+        return {}
+    jsonifier = Jsonifier(
+        file_paths=files_to_process,
+        repo_root=crawler.repo_path,
+        repo_id="dynamic_analysis"
+    )
+    project_cortex = jsonifier.generate_cortex()
+    return project_cortex.get("architectural_graph", {})
+
+
+def inquire_pr(pr_url: str) -> dict:
     """
-    [TRUE FINAL VERSION] Verifies a git reference by trying a list of candidates
-    to handle common naming variations (e.g., tags with/without 'v' prefix).
+    Main orchestration logic for "The Inquisitor" dynamic code review agent.
+    The model_identifier is no longer needed.
     """
-    # Build a list of potential candidates to check.
-    candidates: List[str] = []
+    logger.info(f"--- INQUISITOR AGENT ACTIVATED for PR: {pr_url} ---")
 
-    # 1. Add the ref_name as a potential remote branch.
-    candidates.append(f"origin/{ref_name}")
-
-    # 2. Add the ref_name as a direct reference (exact match for a tag, commit, etc.).
-    candidates.append(ref_name)
-
-    # 3. Handle the 'v' prefix for version tags, which is the source of the issue.
-    if ref_name.startswith('v') and len(ref_name) > 1:
-        # If the user provided 'v1.26.15', try '1.26.15' as a direct ref and as a branch.
-        ref_without_v = ref_name[1:]
-        candidates.append(f"origin/{ref_without_v}")
-        candidates.append(ref_without_v)
-
-    # We will now iterate through our candidates and return the first one that is valid.
-    print(f"   -> Attempting to resolve '{ref_name}' with candidates: {candidates}")
-    for candidate in candidates:
-        try:
-            # `rev-parse --verify` is the correct, simple tool for this.
-            # It exits 0 if the ref is valid and can be resolved, 1 otherwise.
-            subprocess.run(
-                ['git', 'rev-parse', '--verify', '--quiet', candidate],
-                cwd=repo_path, check=True, capture_output=True
-            )
-            # SUCCESS: The candidate is a valid git object.
-            print(f"   -> SUCCESS: Resolved '{ref_name}' as valid git object '{candidate}'")
-            return candidate
-        except subprocess.CalledProcessError:
-            # This candidate failed, continue to the next one.
-            continue
-
-    # If the loop completes without finding a valid candidate, the ref does not exist.
-    print(f"   -> FAILED: Could not resolve '{ref_name}' with any of the candidates.")
-    return None
-
-def prepare_review_environment(repo_url: str, ref_name: str) -> Dict[str, str]:
-    """
-    [TRUE FINAL VERSION] Clones a repo, fetches all refs, then uses the truly robust
-    _resolve_git_ref function to validate and store them for the review.
-    """
-    review_id = str(uuid.uuid4())
-    temp_dir_handle = tempfile.TemporaryDirectory()
-    repo_path = Path(temp_dir_handle.name)
-    print(f"Preparing review environment {review_id} at {repo_path}")
-
+    # 1. On-Demand Workspace Creation & PR Detail Fetching
     try:
-        print(f"   -> Cloning {repo_url}...")
-        subprocess.run(
-            ['git', 'clone', repo_url, str(repo_path)],
-            check=True, capture_output=True, text=True
-        )
-
-        print("   -> Fetching all data from remote 'origin'...")
-        subprocess.run(
-            ['git', 'fetch', 'origin', '--prune', '--tags', '--force'],
-             cwd=repo_path, check=True, capture_output=True, text=True
-        )
-
-        print(f"   -> Resolving feature ref '{ref_name}'...")
-        resolved_feature_ref = _resolve_git_ref(repo_path, ref_name)
-        if not resolved_feature_ref:
-            raise Exception(f"The branch or tag '{ref_name}' could not be found.")
-
-        print("   -> Resolving base branch...")
-        resolved_base_ref = _resolve_git_ref(repo_path, 'main')
-        if not resolved_base_ref:
-            resolved_base_ref = _resolve_git_ref(repo_path, 'master')
-        if not resolved_base_ref:
-            raise Exception("Could not find a valid base branch ('main' or 'master').")
-
-        REVIEW_ENVIRONMENTS[review_id] = {
-            "path": repo_path, "temp_dir_handle": temp_dir_handle,
-            "base_ref": resolved_base_ref, "feature_ref": resolved_feature_ref
-        }
-        print(f"✓ Review environment '{review_id}' is ready.")
-        return {"review_id": review_id}
-
+        pr_details = github.scrape_github_issue(pr_url)
+        if not pr_details:
+            return {"error": "Failed to scrape PR details."}
+        repo_url = pr_details['repo_url']
+        parsed_url = github._parse_github_issue_url(pr_url)
+        if not parsed_url:
+            return {"error": "Could not parse PR URL."}
+        owner, repo_name, pr_number = parsed_url
+        gh_repo = github.g.get_repo(f"{owner}/{repo_name}")
+        pr_obj = gh_repo.get_pull(pr_number)
+        base_ref = pr_obj.base.ref
+        head_ref = pr_obj.head.ref
+        logger.info(f"Analyzing PR #{pr_number}: merging '{head_ref}' into '{base_ref}'")
     except Exception as e:
-        temp_dir_handle.cleanup()
-        error_details = str(e)
-        if hasattr(e, 'stderr') and e.stderr and isinstance(e.stderr, str):
-            error_details = e.stderr.strip()
-        print(f"Error preparing environment: {error_details}")
-        raise Exception(error_details)
+        logger.error(f"Failed to get PR details from GitHub API: {e}", exc_info=True)
+        return {"error": f"Failed to get PR details from GitHub API: {e}"}
 
-def get_diff_for_review(review_id: str) -> str:
-    env = REVIEW_ENVIRONMENTS.get(review_id)
-    if not env: raise FileNotFoundError(f"Review ID '{review_id}' not found or has expired.")
-    repo_path, base_ref, feature_ref = env['path'], env['base_ref'], env['feature_ref']
-    print(f"   -> Calculating diff for review '{review_id}' between '{base_ref}' and '{feature_ref}'...")
-    try:
-        diff_command = ['git', 'diff', f'{base_ref}...{feature_ref}']
-        result = subprocess.run(diff_command, cwd=repo_path, check=True, capture_output=True, text=True)
-        return result.stdout
-    except subprocess.CalledProcessError as e:
-        raise Exception(f"Failed to generate diff: {e.stderr.strip() if e.stderr else str(e)}")
+    with IntelligentCrawler(repo_url=repo_url) as crawler:
+        # 2. Analyze Base Branch
+        logger.info(f"[1/3] Checking out base branch '{base_ref}' and generating graph...")
+        if not crawler.checkout_ref(base_ref):
+            return {"error": f"Could not checkout base branch '{base_ref}'."}
+        base_graph_data = _generate_graph_for_ref(crawler)
+        base_graph = oracle_service._build_knowledge_graph(base_graph_data)
 
-def cleanup_review_environment(review_id: str) -> bool:
-    env = REVIEW_ENVIRONMENTS.pop(review_id, None)
-    if env:
+        # 3. Analyze Head Branch
+        head_sha = pr_obj.head.sha
+        logger.info(f"[2/3] Checking out head commit '{head_sha}' and generating graph...")
+
+        # --- FIX: Fetch PR commits from origin to handle forks ---
         try:
-            env['temp_dir_handle'].cleanup()
-            print(f"✓ Cleaned up review environment '{review_id}'.")
-            return True
+            # This fetches the specific commits associated with the PR's head.
+            # Using the private method is acceptable here to avoid major refactoring.
+            crawler._run_git_command(['git', 'fetch', 'origin', f'pull/{pr_number}/head'], check=True)
+            logger.info(f"Successfully fetched commits for PR #{pr_number}")
         except Exception as e:
-            print(f"Warning: Error during cleanup of review environment '{review_id}': {e}")
-            return False
-    else:
-        print(f"Warning: Review environment '{review_id}' not found for cleanup.")
-        return False
+            logger.warning(f"Could not fetch PR head directly: {e}. The commit might already exist locally.")
+            pass # We can still try to checkout the sha
 
-def review_code_diff(diff_text: str) -> Dict[str, str]:
-    if not diff_text.strip(): return {"review": "No changes detected between the references. The review is complete."}
-    prompt = f"You are an expert Senior Software Engineer...\n---\nGIT DIFF\n```diff\n{diff_text}\n```\nNow, provide your review."
+        # Now, checkout the specific commit hash, which is more reliable than branch names.
+        if not crawler.checkout_ref(head_sha):
+            return {"error": f"Could not checkout head commit SHA '{head_sha}'. The branch might have been deleted or force-pushed."}
+
+        head_graph_data = _generate_graph_for_ref(crawler)
+        head_graph = oracle_service._build_knowledge_graph(head_graph_data)
+
+        # 4. Perform Architectural Graph Differencing
+        logger.info("[3/3] Comparing architectural graphs...")
+        architectural_delta = graph_differ.compare_graphs(base_graph, head_graph)
+        delta_str = json.dumps(architectural_delta, indent=2)
+        # --- FIX: Use the reliable SHA for the diff calculation ---
+        text_diff = crawler.get_diff_for_branch(ref_name=head_sha, base_ref=base_ref)
+        if "Error from crawler" in text_diff:
+            return {"error": f"Failed to get git diff. {text_diff}"}
+
+        # 5. Synthesize the Inquisitive Review
+        prompt_parts = [
+            "You are The Inquisitor, an AI agent expert in software architecture. Your task is to review a Pull Request by analyzing how it changes the project's structure.",
+            f"\n\n**Pull Request Details:**\n- Title: \"{pr_details.get('title', '')}\"\n- Description: \"{pr_details.get('description', '')}\"",
+            "\n\n**ARCHITECTURAL DELTA (Summary of Structural Changes):**\nThis report shows what was added to or removed from the codebase's architecture.",
+            f"```json\n{delta_str}\n```",
+            f"\n\n**CODE CHANGES (Text Diff):**\n```diff\n{text_diff[:4000]}\n```",
+            "\n\n---\n\n**YOUR TASK:**\nBased on the **Architectural Delta**, write a code review.",
+            "- Focus on the *structural implications* of the changes.",
+            "- Highlight any new dependencies, removed functions that might be used elsewhere, or significant changes in how components connect.",
+            "- Use the text diff for specific line context.",
+            "- Start with a summary of the most important architectural changes.",
+            "- Provide clear, constructive feedback."
+        ]
+        synthesis_prompt = "\n".join(prompt_parts)
+
+        # --- THE CHANGE IS HERE ---
+        review_text = llm_service.generate_text(
+            synthesis_prompt,
+            task_type=TaskType.COMPLEX_REASONING
+        )
+        logger.info("--- INQUISITOR AGENT MISSION COMPLETE ---")
+
+        return {"review": review_text, "metadata": {"delta": architectural_delta}}
+
+def harmonize_pr_fix(pr_url: str, review_text: str) -> dict:
+    """
+    Orchestrates the fix-generation process based on a review from the Inquisitor.
+    """
+    logger.info(f"--- HARMONIZER AGENT ACTIVATED for PR: {pr_url} ---")
+
+    # 1. Get PR details
     try:
-        return {"review": generate_text(prompt, model_name='qwen3:4b')}
+        pr_details = github.scrape_github_issue(pr_url)
+        if not pr_details:
+            return {"error": "Failed to scrape PR details."}
+        repo_url = pr_details['repo_url']
+        parsed_url = github._parse_github_issue_url(pr_url)
+        owner, repo_name, pr_number = parsed_url
+        gh_repo = github.g.get_repo(f"{owner}/{repo_name}")
+        pr_obj = gh_repo.get_pull(pr_number)
+        base_ref = pr_obj.base.ref
+        head_ref = pr_obj.head.ref
+        repo_id = repo_url.replace("https://github.com/", "").replace("/", "_")
     except Exception as e:
-        return {"review": f"Error occurred during code review analysis: {str(e)}"}
+        logger.error(f"Failed to get PR details for Harmonizer: {e}", exc_info=True)
+        return {"error": "Failed to get PR details for Harmonizer.", "details": str(e)}
 
-def get_active_review_count() -> int: return len(REVIEW_ENVIRONMENTS)
-def list_active_reviews() -> Dict[str, Dict[str, str]]:
-    summary = {}
-    for r_id, env in REVIEW_ENVIRONMENTS.items():
-        summary[r_id] = {"base": env["base_ref"], "feat": env["feature_ref"], "path": str(env["path"])}
-    return summary
+    # 2. Get working copy of the code and diff
+    with IntelligentCrawler(repo_url=repo_url) as crawler:
+        if not crawler.checkout_ref(head_ref):
+            return {"error": f"Could not checkout head branch '{head_ref}' for fixing."}
+        all_files_in_pr = {str(p.relative_to(crawler.repo_path)): p.read_text(encoding='utf-8', errors='ignore') for p in crawler.get_file_paths()}
+        text_diff = crawler.get_diff_for_branch(ref_name=head_ref, base_ref=base_ref)
+        if "Error from crawler" in text_diff:
+            return {"error": "Failed to get git diff for Harmonizer.", "details": text_diff}
+        target_files = diff_parser.get_changed_files_from_diff(text_diff)
+        if not target_files:
+            return {"error": "Harmonizer could not determine which files to fix from the PR diff."}
+        original_contents_for_fix = {fp: all_files_in_pr.get(fp, "") for fp in target_files}
+
+    # 3. Call the Scaffolder
+    logger.info(f"Harmonizer is calling the Scaffolder with {len(target_files)} target files.")
+
+    # Scaffolder no longer needs a model passed in; it will use the Task Router.
+    scaffold_result = scaffolding.generate_scaffold(
+        repo_id=repo_id,
+        target_files=target_files,
+        instruction=f"Fix the issues identified in the following code review for PR titled '{pr_details.get('title')}'.",
+        rca_report=review_text,
+        refinement_history=[]
+    )
+
+    if "error" in scaffold_result:
+        return scaffold_result
+
+    scaffold_result["original_contents"] = original_contents_for_fix
+    logger.info("--- HARMONIZER MISSION COMPLETE ---")
+    return scaffold_result

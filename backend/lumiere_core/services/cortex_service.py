@@ -3,7 +3,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 logger = logging.getLogger(__name__)
 
@@ -82,3 +82,45 @@ def get_file_content(repo_id: str, file_path: str) -> Optional[str]:
         return None
 
     return None
+
+
+def get_node_line_map(repo_id: str) -> Dict[str, List[Dict]]:
+    """
+    Creates a map from file paths to a list of their contained nodes with line numbers.
+    This is a critical helper for the Adjudicator's diff parser.
+
+    Args:
+        repo_id: The unique ID of the repository.
+
+    Returns:
+        A dictionary mapping filenames to lists of node info.
+        e.g. {'src/main.py': [{'id': '...', 'start_line': 10, 'end_line': 25}]}
+    """
+    node_map = {}
+    try:
+        cortex_data = load_cortex_data(repo_id)
+        graph = cortex_data.get("architectural_graph", {})
+        nodes = graph.get("nodes", {})
+
+        for node_id, node_data in nodes.items():
+            # We are interested in nodes that have line numbers and a file path.
+            # This typically means functions, classes, and methods.
+            start_line = node_data.get("start_line")
+            end_line = node_data.get("end_line")
+            # The 'file' attribute is present on class/function/method nodes.
+            file_path = node_data.get("file")
+
+            if start_line and end_line and file_path:
+                if file_path not in node_map:
+                    node_map[file_path] = []
+
+                node_map[file_path].append({
+                    "id": node_id,
+                    "start_line": start_line,
+                    "end_line": end_line,
+                })
+    except (CortexFileNotFound, CortexFileMalformed) as e:
+        logger.error(f"Could not generate node line map for {repo_id}: {e}")
+        return {}
+
+    return node_map

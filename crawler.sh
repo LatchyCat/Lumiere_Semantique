@@ -11,17 +11,20 @@ set -o pipefail
 # --- User-Defined Configuration ---
 
 # Maximum depth for the 'tree' command.
-TREE_LEVEL=5
+TREE_LEVEL=4 # Reduced level slightly for brevity
 
 # Maximum file size to include (in Kilobytes). Files larger than this will be skipped.
-MAX_FILE_SIZE_KB=256 # Lowered to avoid unexpectedly large config/data files
+MAX_FILE_SIZE_KB=256
 
 # Directories to exclude from the scan.
 # Used for both 'find' and 'tree' commands.
 EXCLUDE_DIRS=(
-    # --- THE NEW ADDITION ---
+    # --- NEW: Top-level dependency/grammar directories to completely ignore ---
+    "grammars"            # Prevents crawling into ANY 'grammars' folder
+    "vendor"              # Excludes all vendored dependencies
+
+    # --- Project-Specific Exclusions ---
     "cloned_repositories" # Excludes all ingested repository artifacts.
-    "vendor"              # <--- ADDED: Excludes vendor directories, such as from tree-sitter.
 
     # --- Standard Exclusions ---
     "node_modules"
@@ -33,12 +36,14 @@ EXCLUDE_DIRS=(
     "__pycache__"
     ".pytest_cache"
     "dist"
-    "build"               # This already handles your `backend/build` folder
+    "build"
     "target"
     "instance"
     "uploads"
     "unprocessed"
-    "*.egg-info" # Added for Python package metadata
+    "*.egg-info"
+    ".github"             # Exclude top-level and nested CI/CD
+    "docs"                # Exclude documentation folders
 
     # --- AI/ML Specific Directory Exclusions ---
     "data"
@@ -57,8 +62,14 @@ EXCLUDE_FILES=(
     ".DS_Store"
     "*.min.js"
     "*.min.css"
+    "parser.c"            # Excludes the huge generated parser files
+    "scanner.c"
+    "scanner.cc"
+    "go.sum"
+    "go.mod"
+    "Cargo.lock"
     # --- AI/ML Specific File Exclusions ---
-    "chroma.sqlite3" # Exclude the main ChromaDB file if it's in the root.
+    "chroma.sqlite3"
 )
 
 # File extensions to exclude. (Note: leading dot is not needed)
@@ -80,6 +91,7 @@ EXCLUDE_EXTENSIONS=(
     "tar"
     "gz"
     "pdf"
+    "wasm"
     # --- AI/ML Specific Extension Exclusions ---
     "jsonl"
     "pkl"
@@ -114,19 +126,6 @@ files into a single text file, which can be easily shared with an AI model.
 ${C_BOLD}Usage:${C_RESET}
   $0 [TARGET_DIRECTORY]
   $0 -h | --help
-
-${C_BOLD}Arguments:${C_RESET}
-  ${C_GREEN}TARGET_DIRECTORY${C_RESET}  Optional. The directory to scan. Defaults to the current directory ('.').
-
-${C_BOLD}Options:${C_RESET}
-  ${C_GREEN}-h, --help${C_RESET}          Show this help message and exit.
-
-${C_BOLD}Features:${C_RESET}
-  - Generates a project file tree structure.
-  - Excludes common dependency, build, and temporary directories/files.
-  - Skips binary files, large files, and lock files.
-  - Creates a single, clean output file named after the project directory.
-  - All exclusions can be easily configured in the script's variables.
 EOF
 }
 
@@ -145,31 +144,20 @@ main() {
         exit 0
     fi
 
-    # An optional first argument can specify the directory to scan.
-    # Defaults to the current directory '.'.
     local TARGET_DIR=${1:-.}
-    # Get the absolute path for clarity in output
     TARGET_DIR=$(realpath "$TARGET_DIR")
 
     # --- Setup ---
-    # Register the cleanup function to be called on EXIT, TERM, or INT signals.
     trap cleanup EXIT TERM INT
-
-    # Create a secure temporary file to store the list of files.
     local TEMP_FILE
     TEMP_FILE=$(mktemp)
-
-    # Determine the output file name based on the target directory.
-    local OUTPUT_FILE
-    if [[ "$(basename "$TARGET_DIR")" == "." || "$TARGET_DIR" == "$PWD" ]]; then
-        OUTPUT_FILE="llm_project_context.txt"
-    else
+    local OUTPUT_FILE="llm_project_context.txt"
+    if [[ "$(basename "$TARGET_DIR")" != "." && "$TARGET_DIR" != "$PWD" ]]; then
         local PREFIX
         PREFIX=$(basename "$TARGET_DIR")
         OUTPUT_FILE="${PREFIX}_context.txt"
     fi
 
-    # Get the name of this script to exclude it from the output.
     local SCRIPT_NAME
     SCRIPT_NAME=$(basename "$0")
 
@@ -180,36 +168,33 @@ main() {
     echo ""
 
     # --- Project Tree Generation ---
-    # Clear output file and add the project tree structure first.
-    # The '>' operator creates or truncates the file.
     > "$OUTPUT_FILE"
 
     if command -v tree &> /dev/null; then
         echo -e "${C_BLUE}Generating project tree structure (up to level $TREE_LEVEL)...${C_RESET}"
-        # Dynamically create the ignore pattern for 'tree' from the EXCLUDE_DIRS array.
         local TREE_IGNORE_PATTERN
         TREE_IGNORE_PATTERN=$(IFS='|'; echo "${EXCLUDE_DIRS[*]}")
 
         echo "--- PROJECT STRUCTURE ---" >> "$OUTPUT_FILE"
-        tree -L "$TREE_LEVEL" -a -I "$TREE_IGNORE_PATTERN" "$TARGET_DIR" >> "$OUTPUT_FILE"
-        echo "" >> "$OUTPUT_FILE"
-        echo "--- END PROJECT STRUCTURE ---" >> "$OUTPUT_FILE"
-        echo -e "\n" >> "$OUTPUT_FILE"
+        tree -L "$TREE_LEVEL" -a -I "$TREE_IGNORE_PATTERN" "$TARGET_DIR" >> "$OUTPUT_FILE" || echo "Tree command failed, continuing..."
+        echo -e "\n--- END PROJECT STRUCTURE ---\n" >> "$OUTPUT_FILE"
     else
         echo -e "${C_YELLOW}Warning: 'tree' command not found. Skipping project structure generation.${C_RESET}"
-        echo -e "${C_GRAY}         (To install: 'sudo apt-get install tree' or 'brew install tree')${C_RESET}"
     fi
 
     # --- File Discovery ---
     echo -e "${C_BLUE}Finding files to process...${C_RESET}"
     local find_args=()
     # Build exclusion arguments for 'find' command
+    # Exclude any path containing a directory name from EXCLUDE_DIRS
     for dir in "${EXCLUDE_DIRS[@]}"; do
         find_args+=('!' '-path' "*/${dir}/*")
     done
+    # Exclude specific filenames
     for file in "${EXCLUDE_FILES[@]}"; do
         find_args+=('!' '-name' "$file")
     done
+    # Exclude specific extensions
     for ext in "${EXCLUDE_EXTENSIONS[@]}"; do
         find_args+=('!' '-name' "*.$ext")
     done
@@ -231,11 +216,8 @@ main() {
         echo -e "${C_YELLOW}No files found matching the criteria. Exiting.${C_RESET}"
         exit 0
     fi
-    if [[ $total_files -gt 1000 ]]; then
+    if [[ $total_files -gt 1500 ]]; then
         echo -e "${C_YELLOW}WARNING: Found $total_files files. This might produce a very large context file.${C_RESET}"
-        echo "First 10 files found:"
-        head -10 "$TEMP_FILE"
-        echo ""
         read -p "Continue? (y/N): " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -252,12 +234,9 @@ main() {
     local max_size_bytes=$((MAX_FILE_SIZE_KB * 1024))
 
     while IFS= read -r file; do
-        # Skip empty lines that might be in the temp file
         [[ -z "$file" ]] && continue
-
         ((processed_count++))
 
-        # Check file size. wc is faster than stat on some systems for a simple byte count.
         local size
         size=$(wc -c < "$file")
         if [[ $size -gt $max_size_bytes ]]; then
@@ -269,16 +248,12 @@ main() {
         ((file_count++))
         echo -e "${C_GREEN}[$processed_count/$total_files]${C_RESET} Adding ${C_GRAY}$file${C_RESET}"
 
-        # Get the relative path for a cleaner output header
         local relative_path
         relative_path=${file#"$TARGET_DIR/"}
 
-        # Append file content to the output file
         echo "--- FILE_START: $relative_path ---" >> "$OUTPUT_FILE"
         cat "$file" >> "$OUTPUT_FILE"
-        echo "" >> "$OUTPUT_FILE" # Add a newline for better separation
-        echo "--- FILE_END: $relative_path ---" >> "$OUTPUT_FILE"
-        echo -e "\n" >> "$OUTPUT_FILE"
+        echo -e "\n--- FILE_END: $relative_path ---\n" >> "$OUTPUT_FILE"
 
     done < "$TEMP_FILE"
 
@@ -290,7 +265,7 @@ main() {
         local size_info
         size_info=$(du -h "$OUTPUT_FILE" | cut -f1)
         local line_count
-        line_count=$(wc -l < "$OUTPUT_FILE")
+        line_count=$(wc -l < "$OUTPUT_FILE" | xargs)
 
         echo "Processed: $file_count files"
         echo "Skipped:   $skipped_count files (due to size limit)"
@@ -298,8 +273,11 @@ main() {
         echo "Total lines: $line_count"
         echo ""
         echo -e "${C_BOLD}File types processed:${C_RESET}"
-        # Extract extensions, sort, count, and display the most common ones first
-        grep "^--- FILE_START:" "$OUTPUT_FILE" | sed -E 's/.*\.([^.]+)$/\1/' | sort | uniq -c | sort -nr
+        # FIXED: Robustly get file extensions or a placeholder for files without one.
+        grep "^--- FILE_START:" "$OUTPUT_FILE" | \
+            sed -e 's/^--- FILE_START: //' -e 's/ ---$//' | \
+            awk -F. '{if (NF>1) print $NF; else print "(no_ext)"}' | \
+            sort | uniq -c | sort -nr
         echo ""
         echo -e "${C_GREEN}✓ Context file ready: $OUTPUT_FILE${C_RESET}"
     else
@@ -308,5 +286,4 @@ main() {
 }
 
 # --- Script Execution ---
-# Pass all command-line arguments to the main function.
 main "$@"

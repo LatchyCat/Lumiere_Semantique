@@ -9,6 +9,7 @@ ollama
 faiss-cpu
 numpy
 tqdm
+networkx
 
 # Web Scraping (Legacy, but keep for now)
 requests

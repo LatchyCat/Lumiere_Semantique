@@ -1,6 +1,8 @@
 # In /Users/latchy/lumiere_semantique/lumiere.py
 
 import typer
+import sys
+sys.path.append('backend')
 import requests
 import sys
 import re
@@ -37,17 +39,19 @@ history_path = Path.home() / ".lumiere" / "history.txt"
 config_path = Path.home() / ".lumiere" / "config.json"
 history_path.parent.mkdir(parents=True, exist_ok=True)
 
-# --- NEW: Centralized API URL ---
+# --- Centralized API URL ---
 API_BASE_URL = "http://127.0.0.1:8002/api/v1"
 
 # Create command completers for better UX
-main_commands = ['analyze', 'a', 'profile', 'p', 'config', 'c', 'help', 'h', 'exit', 'x', 'quit', 'list-repos', 'lr']
+main_commands = ['analyze', 'a', 'ask', 'oracle', 'review', 'dashboard', 'd', 'profile', 'p', 'config', 'c', 'help', 'h', 'exit', 'x', 'quit', 'list-repos', 'lr']
 analysis_commands = ['list', 'l', 'fix', 'f', 'briefing', 'b', 'rca', 'r', 'details', 'd', 'graph', 'g', 'help', 'h', 'back', 'exit', 'quit']
+oracle_commands = ['help', 'h', 'back', 'exit', 'quit']
 
 main_completer = WordCompleter(main_commands, ignore_case=True)
 analysis_completer = WordCompleter(analysis_commands, ignore_case=True)
+oracle_completer = WordCompleter(oracle_commands, ignore_case=True)
 
-# --- ADDED: Style for prompt_toolkit prompt to match rich colors ---
+# --- Style for prompt_toolkit prompt to match rich colors ---
 prompt_style = Style.from_dict({
     'lumiere': 'bold #00ffff',  # bold cyan
     'provider': 'yellow',
@@ -161,101 +165,48 @@ class LumiereAPIClient:
     def __init__(self, base_url: str = API_BASE_URL, timeout: int = 600):
         self.base_url = base_url
         self.timeout = timeout
-        self.session = requests.Session()  # Reuse connections
+        self.session = requests.Session()
 
     def _request(self, method: str, endpoint: str, **kwargs):
         try:
             if method.upper() in ["POST"]:
                 data = kwargs.get("json", {})
-                if "model" not in data:
-                    # Ensure a model is selected before making a request
-                    if not cli_state.get("model"):
-                        console.print("\n[bold red]Error: No LLM model selected.[/bold red]")
-                        console.print("Please use the [bold cyan]config[/bold cyan] command to choose a model first.")
-                        return None # Abort the request
-                    data["model"] = cli_state["model"]
+                # The Task Router now handles model selection, so we don't add it here.
+                # Only check for existence if it's a legacy endpoint that needs it.
                 kwargs["json"] = data
-
             url = f"{self.base_url}/{endpoint}"
-
             if cli_state["debug_mode"]:
                 console.print(f"[dim]DEBUG: {method} {url}[/dim]")
                 if "json" in kwargs:
                     console.print(f"[dim]DEBUG: Payload: {kwargs['json']}[/dim]")
-
             response = self.session.request(method, url, timeout=self.timeout, **kwargs)
             response.raise_for_status()
+            # Handle potential empty responses from server
+            if response.status_code == 204 or not response.content:
+                return {}
             return response.json()
-
         except requests.exceptions.ConnectionError as e:
-            console.print(Panel(
-                f"[bold red]Cannot connect to Lumière backend[/bold red]\n"
-                f"[yellow]Expected URL:[/yellow] {self.base_url}\n"
-                f"[yellow]Error:[/yellow] {str(e)}\n\n"
-                f"[dim]💡 Make sure the backend server is running:\n"
-                f"   • Execute `cd backend && ./run_server.sh`\n"
-                f"   • Verify the URL is correct\n"
-                f"   • Check firewall settings[/dim]",
-                title="[red]Connection Error[/red]",
-                border_style="red"
-            ))
+            console.print(Panel(f"[bold red]Cannot connect to Lumière backend[/bold red]\n[yellow]Expected URL:[/yellow] {self.base_url}\n[yellow]Error:[/yellow] {str(e)}\n\n[dim]💡 Make sure the backend server is running.[/dim]", title="[red]Connection Error[/red]", border_style="red"))
             return None
-
         except requests.exceptions.HTTPError as e:
             try:
-                # Check for a JSON response, which might contain detailed error info from our backend
                 error_json = e.response.json()
                 error_details = error_json.get('error', str(error_json))
-
-                console.print(Panel(
-                    f"[bold red]API Request Failed[/bold red]\n"
-                    f"[yellow]URL:[/yellow] {e.request.url}\n"
-                    f"[yellow]Status:[/yellow] {e.response.status_code}\n"
-                    f"[yellow]Error:[/yellow] {error_details}",
-                    title="[red]API Error[/red]",
-                    border_style="red"
-                ))
-
-                # If the backend included the raw LLM response for debugging, display it
+                console.print(Panel(f"[bold red]API Request Failed[/bold red]\n[yellow]URL:[/yellow] {e.request.url}\n[yellow]Status:[/yellow] {e.response.status_code}\n[yellow]Error:[/yellow] {error_details}", title="[red]API Error[/red]", border_style="red"))
                 llm_response_for_debug = error_json.get('llm_response')
                 if llm_response_for_debug:
-                    console.print(Panel(
-                        Text(llm_response_for_debug, overflow="fold"),
-                        title="[bold yellow]🔍 LLM Raw Response (for debugging)[/bold yellow]",
-                        border_style="yellow",
-                        expand=False
-                    ))
-
+                    console.print(Panel(Text(llm_response_for_debug, overflow="fold"), title="[bold yellow]🔍 LLM Raw Response (for debugging)[/bold yellow]", border_style="yellow", expand=False))
             except json.JSONDecodeError:
-                # The error response wasn't JSON, so we just display the raw text
-                console.print(Panel(
-                    f"[bold red]HTTP Error {e.response.status_code}[/bold red]\n"
-                    f"[yellow]URL:[/yellow] {e.request.url}\n\n"
-                    f"[bold]Response Text:[/bold]\n{e.response.text[:500]}...",
-                    title="[red]Non-JSON API Error[/red]",
-                    border_style="red"
-                ))
+                console.print(Panel(f"[bold red]HTTP Error {e.response.status_code}[/bold red]\n[yellow]URL:[/yellow] {e.request.url}\n\n[bold]Response Text:[/bold]\n{e.response.text[:500]}...", title="[red]Non-JSON API Error[/red]", border_style="red"))
             return None
-
         except requests.exceptions.Timeout:
-            console.print(Panel(
-                f"[bold red]Request Timeout[/bold red]\n"
-                f"The request took longer than {self.timeout} seconds.\n"
-                f"[dim]The backend might be processing a large repository.[/dim]",
-                title="[red]Timeout Error[/red]"
-            ))
+            console.print(Panel(f"The request took longer than {self.timeout} seconds.", title="[red]Timeout Error[/red]"))
             return None
-
         except requests.exceptions.RequestException as e:
-            console.print(Panel(
-                f"[bold red]Request Error[/bold red]\n"
-                f"[yellow]Error:[/yellow] {str(e)}",
-                title="[red]Request Error[/red]"
-            ))
+            console.print(Panel(f"[bold red]Request Error[/bold red]\n[yellow]Error:[/yellow] {str(e)}", title="[red]Request Error[/red]"))
             return None
 
     def health_check(self) -> bool:
-        """Check if the backend is healthy."""
         try:
             response = self.session.get(f"{self.base_url}/health", timeout=5)
             return response.status_code == 200
@@ -268,39 +219,147 @@ class LumiereAPIClient:
     def get_rca(self, repo_url: str, bug_description: str): return self._request("POST", "rca/", json={"repo_url": repo_url, "bug_description": bug_description})
     def get_profile(self, username: str): return self._request("POST", "profile/review/", json={"username": username})
     def get_graph(self, repo_id: str): return self._request("GET", f"graph/?repo_id={repo_id}")
-
-    def generate_docstring(self, repo_id: str, code: str, instruction: str):
-        return self._request("POST", "generate-docstring/", json={
-            "repo_id": repo_id,
-            "new_code": code,
-            "instruction": instruction
-        })
-
-    def generate_tests(self, repo_id: str, code_to_test: str, instruction: str):
-        return self._request("POST", "generate-tests/", json={
-            "repo_id": repo_id,
-            "new_code": code_to_test,
-            "instruction": instruction
-        })
-
-    # --- CORRECTED: Replaced old `generate_fix` with new `generate_scaffold` ---
+    def generate_docstring(self, repo_id: str, code: str, instruction: str): return self._request("POST", "generate-docstring/", json={"repo_id": repo_id, "new_code": code, "instruction": instruction})
+    def generate_tests(self, repo_id: str, code_to_test: str, instruction: str): return self._request("POST", "generate-tests/", json={"repo_id": repo_id, "new_code": code_to_test, "instruction": instruction})
     def generate_scaffold(self, repo_id: str, target_files: List[str], instruction: str, rca_report: str, refinement_history: Optional[List[Dict]] = None):
-        payload = {
-            "repo_id": repo_id,
-            "target_files": target_files,
-            "instruction": instruction,
-            "rca_report": rca_report,
-            "refinement_history": refinement_history or []
-        }
+        payload = {"repo_id": repo_id, "target_files": target_files, "instruction": instruction, "rca_report": rca_report, "refinement_history": refinement_history or []}
         return self._request("POST", "scaffold/", json=payload)
-
-    # --- MODIFIED: Updated to handle a dictionary of files ---
-    def create_pr(self, issue_url: str, modified_files: Dict[str, str]):
-        return self._request("POST", "ambassador/dispatch/", json={"issue_url": issue_url, "modified_files": modified_files})
-
+    def create_pr(self, issue_url: str, modified_files: Dict[str, str]): return self._request("POST", "ambassador/dispatch/", json={"issue_url": issue_url, "modified_files": modified_files})
     def get_diplomat_report(self, issue_title: str, issue_body: str): return self._request("POST", "diplomat/find-similar-issues/", json={"issue_title": issue_title, "issue_body": issue_body})
     def validate_in_crucible(self, repo_url: str, target_file: str, modified_code: str): return self._request("POST", "crucible/validate/", json={"repo_url": repo_url, "target_file": target_file, "modified_code": modified_code})
     def ingest_repository(self, repo_url: str): return self._request("POST", "ingest/", json={"repo_url": repo_url})
+    def ask_oracle(self, repo_id: str, question: str): return self._request("POST", "oracle/ask/", json={"repo_id": repo_id, "question": question})
+    def adjudicate_pr(self, pr_url: str): return self._request("POST", "review/adjudicate/", json={"pr_url": pr_url})
+    def harmonize_fix(self, pr_url: str, review_text: str): return self._request("POST", "review/harmonize/", json={"pr_url": pr_url, "review_text": review_text})
+    def get_sentinel_briefing(self, repo_id: str): return self._request("GET", f"sentinel/briefing/?repo_id={repo_id}")
+    # --- NEW: Method for the Mission Controller ---
+    def get_next_actions(self, last_action: str, result_data: dict): return self._request("POST", "suggest-actions/", json={"last_action": last_action, "result_data": result_data})
+
+
+def _present_next_actions(api_client, last_action: str, context: dict) -> Tuple[Optional[str], dict]:
+    """
+    Gets suggestions from the backend and presents a dynamic menu to the user.
+    This is the core of the Conversational Mission Controller.
+
+    Args:
+        api_client: The instance of LumiereAPIClient.
+        last_action: The command that was just executed.
+        context: A dictionary containing data from the last action's result.
+
+    Returns:
+        A tuple of (command_string, context_dict) for the next action, or (None, {})
+    """
+    response = api_client.get_next_actions(last_action, context)
+    if not response or "suggestions" not in response:
+        return None, {}  # No suggestions, fall back to main loop
+
+    suggestions = response["suggestions"]
+    recommended_choice = response["recommended_choice"]
+
+    if not suggestions:
+        return None, {}
+
+    # Build the rich prompt
+    table = Table(title="[bold yellow]🚀 What's Next?[/bold yellow]", show_header=False, box=None, padding=(0, 2))
+    choices = []
+    choice_map = {}
+    for item in suggestions:
+        key = item["key"]
+        text = item["text"]
+        command = item["command"]
+        table.add_row(f"([bold cyan]{key}[/bold cyan])", text)
+        choices.append(key)
+        choice_map[key] = command
+
+    console.print(table)
+
+    try:
+        user_choice_key = Prompt.ask("Select an action", choices=choices, default=recommended_choice)
+        selected_command = choice_map[user_choice_key]
+
+        if selected_command == "back":
+            return "back", {}
+
+        # The context dictionary is passed through to the next command handler.
+        return selected_command, context
+
+    except (KeyboardInterrupt, EOFError):
+        console.print("\n[yellow]Action cancelled.[/yellow]")
+        return "back", {} # Treat cancel as going back to main menu
+    except (ValueError, KeyError):
+        console.print("[red]Invalid selection.[/red]")
+        return "back", {}
+
+# --- NEW: Oracle Session Manager ---
+class OracleSession:
+    def __init__(self, repo_url: str):
+        self.repo_url = repo_url
+        self.repo_id = self.repo_url.replace("https://github.com/", "").replace("/", "_")
+        self.api = LumiereAPIClient()
+        console.print(Panel(
+            f"[bold magenta]🔮 Oracle Session Activated[/bold magenta]\n"
+            f"[yellow]Repository:[/yellow] {self.repo_id}\n"
+            f"[yellow]Model:[/yellow] {cli_state['model']}\n\n"
+            "[dim]Ask any architectural question about the codebase. Type 'back' or 'exit' to finish.[/dim]",
+            border_style="magenta"
+        ))
+
+    def loop(self):
+        """Main interactive Q&A loop for The Oracle."""
+        global prompt_session
+        prompt_session = PromptSession(
+            history=FileHistory(str(history_path)),
+            completer=oracle_completer,
+            style=prompt_style
+        )
+
+        while True:
+            try:
+                # Custom prompt for the Oracle
+                oracle_prompt_text = [
+                    ('class:lumiere', 'Lumière'),
+                    ('class:provider', f' (Oracle/{self.repo_id})'),
+                    ('class:separator', ' > '),
+                ]
+
+                question = prompt_session.prompt(oracle_prompt_text).strip()
+
+                if not question:
+                    continue
+                if question.lower() in ("q", "quit", "exit", "back"):
+                    break
+                if question.lower() in ("h", "help"):
+                     console.print("\n[dim]Enter your question or type 'back' to exit The Oracle.[/dim]")
+                     continue
+
+                with Status("[cyan]The Oracle is consulting the archives...[/cyan]", spinner="dots"):
+                    response = self.api.ask_oracle(self.repo_id, question)
+
+                if response and response.get("answer"):
+                    console.print(Panel(
+                        Markdown(response["answer"]),
+                        title="[bold magenta]🔮 The Oracle's Answer[/bold magenta]",
+                        border_style="magenta"
+                    ))
+                elif response and response.get("error"):
+                    console.print(Panel(response["error"], title="[yellow]Oracle Warning[/yellow]", border_style="yellow"))
+                else:
+                    console.print("[red]❌ The Oracle did not provide an answer.[/red]")
+
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Use 'exit' or 'back' to return to the main menu.[/yellow]")
+                continue
+            except EOFError:
+                break
+
+        console.print("[magenta]🔮 Oracle session ended.[/magenta]")
+        # Restore main completer
+        prompt_session = PromptSession(
+            history=FileHistory(str(history_path)),
+            completer=main_completer,
+            style=prompt_style
+        )
+
 
 # --- MODIFIED: Implemented a two-step provider/model selection process. ---
 def handle_model_selection(api: "LumiereAPIClient"):
@@ -458,15 +517,13 @@ class AnalysisSession:
             status.update("[green]✓ Backend connection established")
             time.sleep(0.5)
 
-        # --- MODIFIED: Check for existing repo before asking to ingest ---
         is_already_analyzed = check_if_repo_is_analyzed(self.repo_id)
-        do_embed = False  # Default to not embedding
+        do_embed = False
 
         if is_already_analyzed:
             console.print(f"\n[bold green]✓ Found existing analyzed repository for '{self.repo_id}'.[/bold green] [dim]Skipping ingestion.[/dim]")
         else:
             try:
-                # Set do_embed to True only if user confirms for a new repo
                 do_embed = Confirm.ask(
                     "\n[bold]Do you want to clone and embed this repo for full analysis (briefing, rca, fix)?[/bold]\n"
                     "[dim](This can take a few minutes for large repos. Choose 'N' for issue listing only.)[/dim]",
@@ -476,11 +533,10 @@ class AnalysisSession:
                 console.print("\n[yellow]Analysis cancelled.[/yellow]")
                 return False
 
-        if do_embed: # This condition is only met for new repos where the user confirmed.
+        if do_embed:
             with Status("[cyan]🚀 Beginning ingestion...[/cyan]", spinner="earth") as status:
                 status.update("[cyan]Cloning repository and analyzing files...[/cyan]")
                 ingest_result = self.api.ingest_repository(self.repo_url)
-
                 if ingest_result and ingest_result.get("status") == "success":
                     status.update("[green]✓ Repository cloned and embedded successfully.[/green]")
                     time.sleep(1)
@@ -496,15 +552,12 @@ class AnalysisSession:
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             transient=True
         ) as progress:
-            task = progress.add_task("[green]🤖 Contacting The Strategist...", total=100)
+            task = progress.add_task("[green]🤖 Contacting The Strategist...", total=None)
             strategist_data = self.api.get_analysis(self.repo_url)
             if not strategist_data:
                 return False
-            progress.update(task, completed=100)
 
         self.issues = strategist_data.get("prioritized_issues", [])
         if not self.issues:
@@ -555,7 +608,6 @@ class AnalysisSession:
             console.print("[yellow]No architectural nodes were mapped for this project.[/yellow]")
             return
 
-        # --- MAJOR IMPROVEMENT: Process edges to group and count calls ---
         edges_by_source = defaultdict(lambda: {'imports': [], 'calls': defaultdict(int)})
         for edge in edges:
             source_id = edge['source']
@@ -570,7 +622,6 @@ class AnalysisSession:
         tree = Tree(f"[bold blue]Project: {repo_id}[/bold blue]", guide_style="cyan")
         file_tree_nodes = {}
 
-        # First pass: Build the primary structure (Files, Classes, Functions)
         for node_id, node_data in sorted(nodes.items()):
             if node_data.get('type') == 'file':
                 lang = node_data.get('language', 'unknown')
@@ -585,32 +636,25 @@ class AnalysisSession:
                     class_node_id = f"{node_id}::{class_name}"
                     class_branch = file_branch.add(f"📦 [cyan]class[/cyan] {class_name}")
 
-                    # Attach methods to their class
                     for method_name in sorted(nodes.get(class_node_id, {}).get('methods', [])):
                         class_branch.add(f"  -  M [dim]{method_name}()[/dim]")
 
-                # Attach top-level functions to the file
                 for func_name in sorted(node_data.get('functions', [])):
                     file_branch.add(f"  - F [dim]{func_name}()[/dim]")
 
-        # Second pass: Add the summarized relationships (imports and calls)
         for source_id, relationships in edges_by_source.items():
             if source_id in file_tree_nodes:
                 parent_branch = file_tree_nodes[source_id]
 
-                # Display Imports first
                 if relationships['imports']:
                     import_branch = parent_branch.add("📥 [bold]Imports[/bold]")
-                    for target in sorted(list(set(relationships['imports']))): # Use set to remove duplicates
+                    for target in sorted(list(set(relationships['imports']))):
                         import_branch.add(f"[yellow]{target}[/yellow]")
 
-                # Display Summarized Calls
                 if relationships['calls']:
                     calls_branch = parent_branch.add("📞 [bold]Calls[/bold]")
-                    # Sort calls by frequency (most frequent first)
                     sorted_calls = sorted(relationships['calls'].items(), key=lambda item: item[1], reverse=True)
 
-                    # Limit the number of calls displayed to prevent clutter
                     max_calls_to_show = 15
                     for i, (target, count) in enumerate(sorted_calls):
                         if i >= max_calls_to_show:
@@ -805,12 +849,9 @@ class AnalysisSession:
         if rca_data and rca_data.get("analysis"):
             analysis_text = rca_data["analysis"]
 
-            # --- THIS IS THE FIX ---
-            # Check if the analysis text is actually an error message from the API.
             is_error = "Error from Gemini API" in analysis_text or "API Request Failed" in analysis_text
 
             if is_error:
-                # It's an error, so display it but clear the state.
                 self.last_rca_report = None
                 self.last_rca_issue_num = None
                 console.print(Panel(
@@ -819,7 +860,6 @@ class AnalysisSession:
                     border_style="red"
                 ))
             else:
-                # It's a valid report, so save the state.
                 self.last_rca_report = analysis_text
                 self.last_rca_issue_num = issue['number']
                 console.print(Panel(
@@ -829,11 +869,9 @@ class AnalysisSession:
                 ))
                 console.print("\n[bold yellow]💡 Pro-tip:[/bold yellow] [dim]You can now type '[/dim][bold]f[/bold][dim]' to start fixing this issue.[/dim]")
         else:
-            # This handles cases where the API response is malformed.
             self.last_rca_report = None
             self.last_rca_issue_num = None
             console.print("[red]❌ Could not perform root cause analysis.[/red]")
-
 
     def _display_diff(self, original_code: str, new_code: str, filename: str):
         """Display a formatted diff of code changes for a single file."""
@@ -870,21 +908,14 @@ class AnalysisSession:
 
     def _extract_filenames_from_rca(self, rca_report: str) -> List[str]:
         """Extracts filenames from markdown code fences, inline backticks, and lists."""
-        # This new, more robust pattern finds filenames:
-        # 1. In backticks: `file.py`
-        # 2. In lists/bullet points: - file.py or * file.py
-        # 3. As standalone words that look like file paths.
         pattern = r'(?:\s|-|\*|`)([\w./-]+\.(?:py|js|ts|gs|json|md|html|css|yaml|yml|toml|txt))\b'
         matches = re.findall(pattern, rca_report)
 
-        # Also grab any remaining backticked items that the first pass might miss
         backtick_pattern = r'`([\w./\\-]+)`'
         matches.extend(re.findall(backtick_pattern, rca_report))
 
-        # Filter and deduplicate
         filenames = sorted(list(set(matches)))
         return [f for f in filenames if '.' in f and f.lower() not in ['true', 'false']]
-
 
     def handle_fix_dialogue(self, issue: Dict):
         """Handle the complete fix dialogue, now driven by RCA and with documentation and automated test generation."""
@@ -924,7 +955,7 @@ class AnalysisSession:
         modified_files = {}
         original_contents = {}
         is_documented = False
-        are_tests_generated = False # <-- NEW STATE
+        are_tests_generated = False
 
         while iteration_count < max_iterations:
             iteration_count += 1
@@ -948,11 +979,10 @@ class AnalysisSession:
                 modified_files = fix_data["modified_files"]
                 original_contents = fix_data["original_contents"]
                 is_documented = False
-                are_tests_generated = False # Reset test state on new code generation
+                are_tests_generated = False
 
             console.rule("[bold]📝 Review Proposed Changes[/bold]")
             for filename, new_code in modified_files.items():
-                # Avoid showing a diff for unchanged files
                 if original_contents.get(filename, "") != new_code:
                     self._display_diff(original_contents.get(filename, ""), new_code, filename)
 
@@ -980,7 +1010,6 @@ class AnalysisSession:
             if all_validations_passed and files_to_validate:
                  console.print(Panel("✅ [bold green]All tests passed for all modified files![/bold green]", title="[green]🔥 Crucible Report[/green]", border_style="green"))
 
-            # Interactive loop for user actions (approve, refine, etc.)
             while True:
                 try:
                     action_choices = ['r', 'c']
@@ -992,7 +1021,6 @@ class AnalysisSession:
                         if not is_documented and any(f.endswith((".py", ".js", ".ts")) for f in modified_files.keys()):
                            action_choices.append('d')
                            prompt_text += "[bold blue](d)[/bold blue] Document the changes\n"
-                        # --- NEW "GENERATE TESTS" OPTION ---
                         if not are_tests_generated:
                             action_choices.append('t')
                             prompt_text += "[bold yellow](t)[/bold yellow] Generate tests for the fix\n"
@@ -1036,7 +1064,6 @@ class AnalysisSession:
                             self._display_diff(original_contents.get(filename, ""), new_code, filename)
                     continue
 
-                # --- NEW TEST GENERATION HANDLER ---
                 if choice == 't':
                     if are_tests_generated:
                         console.print("[yellow]Tests have already been generated for this fix.[/yellow]")
@@ -1048,13 +1075,11 @@ class AnalysisSession:
                     generated_test_files = {}
                     with Status("[bold yellow]🔬 Calling Test Generation Agent...[/bold yellow]") as status:
                         for filename, code in modified_files.items():
-                            # Only generate tests for runnable code, not for tests themselves
                             if any(filename.endswith(ext) for ext in [".py", ".js", ".ts"]) and 'test' not in filename:
                                 status.update(f"[bold yellow]🔬 Generating tests for {filename}...[/bold yellow]")
                                 test_result = self.api.generate_tests(self.repo_id, code, issue_desc)
 
                                 if test_result and test_result.get("generated_tests"):
-                                    # Heuristic to determine the new test file's path
                                     test_file_path = f"tests/test_{Path(filename).stem}.py"
                                     generated_test_files[test_file_path] = test_result["generated_tests"]
                                     console.print(f"  [green]✓[/green] Generated test file: [cyan]{test_file_path}[/cyan]")
@@ -1063,15 +1088,15 @@ class AnalysisSession:
 
                     if generated_test_files:
                         modified_files.update(generated_test_files)
-                        are_tests_generated = True  # Set the flag
+                        are_tests_generated = True
                         console.print("\n[green]✓ Test generation complete.[/green]")
                         console.rule("[bold]📝 Review New Test Files[/bold]")
                         for filename, new_code in generated_test_files.items():
-                            self._display_diff("", new_code, filename) # Original is "" for a new file
+                            self._display_diff("", new_code, filename)
                     else:
                         console.print("[yellow]No new tests were generated.[/yellow]")
 
-                    continue # Go back to the user action menu
+                    continue
 
                 if choice == 'c': break
                 if choice == 'a' and all_validations_passed: break
@@ -1111,7 +1136,6 @@ class AnalysisSession:
         self.last_rca_issue_num = None
 
 
-        
 # --- Utility Function for Help Display ---
 def display_interactive_help(context: str = 'main'):
     """Display help instructions based on the current CLI context."""
@@ -1121,8 +1145,12 @@ def display_interactive_help(context: str = 'main'):
     help_table.add_column("Description", style="white")
 
     if context == 'main':
-        help_table.add_row("analyze / a", "Start analysis on a GitHub repo")
+        help_table.add_row("analyze / a", "Ingest or re-ingest a repo for analysis")
+        help_table.add_row("ask / oracle", "Ask architectural questions about a repo")
+        help_table.add_row("review", "Perform an AI-powered review of a Pull Request")
+        help_table.add_row("dashboard / d", "View the project health dashboard")
         help_table.add_row("profile / p", "Get GitHub user profile analysis")
+
         # --- DYNAMIC HELP TEXT ---
         if cli_state.get("model"):
             help_table.add_row("config / c", "Change LLM model or view settings")
@@ -1149,27 +1177,33 @@ app = typer.Typer()
 def run():
     """Launch Lumière interactive shell."""
     api_client = LumiereAPIClient()
-    if not api_client.health_check():
-        sys.exit(1) # Error already printed by client
+
+    health_status = api_client._request("GET", "health/")
+    if health_status is None:
+        console.print("[bold red]Lumière CLI cannot start without a backend connection.[/bold red]")
+        sys.exit(1)
 
     load_config()
 
-    # --- ENHANCED WELCOME PANEL ---
-    welcome_text = (
-        f"[bold cyan]✨ Welcome to Lumière ✨[/bold cyan]\n"
-        f"AI Dev Assistant for Open Source Projects\n\n"
-        f"[dim]Backend Status: [green]Online[/green] at [underline]{API_BASE_URL}[/underline]\n"
-        f"Date: {datetime.now().strftime('%B %d, %Y %H:%M:%S')}[/dim]"
-    )
+    welcome_text = (f"[bold cyan]✨ Welcome to Lumière Sémantique ✨[/bold cyan]\n"
+                    f"The Conversational Mission Controller is active.\n\n"
+                    f"[dim]Backend Status: [green]Online[/green] at [underline]{API_BASE_URL}[/underline][/dim]")
     console.print(Panel(welcome_text, border_style="cyan"))
-
     display_interactive_help('main')
+
+    next_command = None
+    context = {}
 
     while True:
         try:
-            # --- CORRECTED PROMPT HANDLING ---
-            prompt_text = get_prompt_text()
-            command = prompt_session.prompt(prompt_text).strip()
+            if next_command is None:
+                prompt_text = get_prompt_text()
+                command = prompt_session.prompt(prompt_text).strip()
+            else:
+                command = next_command
+                console.print(f"\n[dim]Executing suggested action: [bold]{command}[/bold]...[/dim]")
+
+            next_command = None
 
             if not command:
                 continue
@@ -1178,11 +1212,15 @@ def run():
                 console.print("[dim]👋 Goodbye![/dim]")
                 break
 
-            if command.lower() in ("help", "h"):
+            elif command.lower() == "back":
+                console.print()
+                continue
+
+            elif command.lower() in ("help", "h"):
                 display_interactive_help('main')
                 continue
 
-            if command.lower() in ("config", "c"):
+            elif command.lower() in ("config", "c"):
                 console.print(Panel(
                     f"[bold]Current Settings[/bold]\n"
                     f"  [cyan]LLM Model:[/cyan] [yellow]{cli_state.get('model', 'Not set')}[/yellow]\n"
@@ -1193,77 +1231,161 @@ def run():
                 handle_model_selection(api_client)
                 continue
 
-            if command.lower() in ("profile", "p"):
+            elif command.lower() in ("profile", "p"):
                 if not cli_state.get("model"):
                     console.print("[bold red]Please select a model first using the 'config' command.[/bold red]")
                     continue
                 username = Prompt.ask("Enter GitHub username")
-                if not username.strip():
-                    continue
+                if not username.strip(): continue
                 with Status("[cyan]Generating profile analysis...[/cyan]"):
                     profile = api_client.get_profile(username)
                 if profile and profile.get("profile_summary"):
                     console.print(Panel(Markdown(profile["profile_summary"]), title=f"👤 Profile Analysis for {username}"))
-                else:
-                    console.print("[red]❌ Could not retrieve profile.[/red]")
+                else: console.print("[red]❌ Could not retrieve profile.[/red]")
                 continue
 
-            if command.lower() in ("analyze", "a"):
+            elif command.lower() in ("ask", "oracle"):
                 if not cli_state.get("model"):
                     console.print("[bold red]Please select a model first using the 'config' command.[/bold red]")
                     continue
 
-                # --- NEW REPO SELECTION LOGIC ---
-                analyzed_repos = find_analyzed_repos()
-                repo_url_to_analyze = None
-
-                if analyzed_repos:
-                    console.print(Panel("Found previously analyzed repositories. Select one or analyze a new one.",
-                                      title="[cyan]Select Repository[/cyan]", border_style="cyan"))
-                    table = Table(show_header=False, box=None, padding=(0, 2))
-                    for i, repo in enumerate(analyzed_repos, 1):
-                        table.add_row(f"([bold cyan]{i}[/bold cyan])", repo['display_name'])
-                    table.add_row("([bold yellow]N[/bold yellow])", "Analyze a new repository")
-                    console.print(table)
-
-                    choices = [str(i) for i in range(1, len(analyzed_repos) + 1)] + ['n', 'N']
-                    default_choice = '1' if analyzed_repos else 'n'
-
-                    choice = Prompt.ask(
-                        "Enter your choice",
-                        choices=choices,
-                        show_choices=False,
-                        default=default_choice
-                    ).lower()
-
-                    if choice == 'n':
-                        repo_url_to_analyze = Prompt.ask("Enter GitHub repository URL").strip()
-                    elif choice.isdigit() and 1 <= int(choice) <= len(analyzed_repos):
-                        selected_repo = analyzed_repos[int(choice) - 1]
-                        repo_url_to_analyze = selected_repo['url']
-                        console.print(f"✅ Analyzing selected repository: [bold cyan]{repo_url_to_analyze}[/bold cyan]")
-                    else:
-                        console.print("[red]❌ Invalid selection.[/red]")
+                repo_url = context.get("repo_url") or context.get("pr_url", "").split("/pull/")[0]
+                if not repo_url:
+                    analyzed_repos = find_analyzed_repos()
+                    if not analyzed_repos:
+                        console.print("[yellow]No analyzed repositories found. Use 'analyze' to ingest a repo first.[/yellow]")
                         continue
-                else:
-                    repo_url_to_analyze = Prompt.ask("Enter GitHub repository URL").strip()
-                # --- END NEW REPO SELECTION LOGIC ---
+                    console.print(Panel("Select a repository to ask questions about.", title="[magenta]🔮 The Oracle[/magenta]", border_style="magenta"))
+                    table = Table(show_header=False, box=None, padding=(0, 2))
+                    for i, repo in enumerate(analyzed_repos, 1): table.add_row(f"([bold cyan]{i}[/bold cyan])", repo['display_name'])
+                    console.print(table)
+                    try:
+                        choice = Prompt.ask("Enter choice", choices=[str(i) for i in range(1, len(analyzed_repos) + 1)], show_choices=False, default='1')
+                        repo_url = analyzed_repos[int(choice) - 1]['url']
+                    except (ValueError, IndexError, KeyboardInterrupt): continue
 
-                if not repo_url_to_analyze: # Gracefully handle empty input from either path
+                oracle_session = OracleSession(repo_url)
+                oracle_session.loop()
+                context = {}
+                continue
+
+            elif command.lower() in ("review",):
+                if not cli_state.get("model"):
+                    console.print("[bold red]Please select a model first using the 'config' command.[/bold red]")
                     continue
+
+                pr_url = Prompt.ask("Enter the full GitHub Pull Request URL to review").strip()
+                if not pr_url or "github.com" not in pr_url or "/pull/" not in pr_url:
+                    console.print("[red]❌ Invalid Pull Request URL.[/red]")
+                    continue
+
+                result_data = None
+                with Status("[cyan]The Inquisitor is reviewing the PR...[/cyan]", spinner="earth"):
+                    result_data = api_client.adjudicate_pr(pr_url)
+
+                if result_data and result_data.get("review"):
+                    console.print(Panel(Markdown(result_data["review"]), title=f"⚖️ Inquisitor's Review", border_style="blue"))
+                    context = {"pr_url": pr_url, "repo_url": pr_url.split("/pull/")[0], **result_data}
+                    next_command, context = _present_next_actions(api_client, "review", context)
+                elif result_data and result_data.get("error"):
+                    console.print(Panel(f"[bold red]Review Failed:[/bold red]\n{result_data['error']}", title="[red]Inquisitor Error[/red]"))
+                else: console.print("[red]❌ The Inquisitor did not provide a review.[/red]")
+                continue
+
+            elif command.lower() == "harmonize":
+                 pr_url = context.get("pr_url")
+                 review_text = context.get("review")
+                 if not pr_url or not review_text:
+                     console.print("[red]Harmonize command requires context from a review. Please run 'review' first.[/red]")
+                     continue
+
+                 with Status("[cyan]The Harmonizer is composing a fix...[/cyan]"):
+                     fix_data = api_client.harmonize_fix(pr_url, review_text)
+
+                 if fix_data and "modified_files" in fix_data:
+                     console.rule("[bold]📝 Review Harmonizer's Proposed Changes[/bold]")
+                     dummy_session = AnalysisSession(pr_url.split('/pull/')[0])
+                     for filename, new_code in fix_data["modified_files"].items():
+                         original_code = fix_data.get("original_contents", {}).get(filename, "")
+                         if original_code != new_code:
+                             dummy_session._display_diff(original_code, new_code, filename)
+                     console.print(Panel("✅ [bold green]Harmonizer's patch generated.[/bold green]", border_style="green"))
+                 else:
+                     console.print(Panel(f"[red]Harmonizer failed to generate a fix: {fix_data.get('error', 'Unknown error')}[/red]", border_style="red"))
+
+                 context = {}
+                 continue
+
+            elif command.lower() in ("dashboard", "d"):
+                if not cli_state.get("model"):
+                    console.print("[bold red]Please select a model first using the 'config' command.[/bold red]")
+                    continue
+
+                repo_id = context.get("repo_id")
+                if not repo_id:
+                    analyzed_repos = find_analyzed_repos()
+                    if not analyzed_repos:
+                        console.print("[yellow]No analyzed repositories found. Use 'analyze' to ingest a repo first.[/yellow]")
+                        continue
+                    console.print(Panel("Select a repository to view its health dashboard.", title="[cyan]🔭 The Sentinel[/cyan]", border_style="cyan"))
+                    table = Table(show_header=False, box=None, padding=(0, 2))
+                    for i, repo in enumerate(analyzed_repos, 1): table.add_row(f"([bold cyan]{i}[/bold cyan])", repo['display_name'])
+                    console.print(table)
+                    try:
+                        choice = Prompt.ask("Enter choice", choices=[str(i) for i in range(1, len(analyzed_repos) + 1)], show_choices=False, default='1')
+                        repo_id = analyzed_repos[int(choice) - 1]['repo_id']
+                    except (ValueError, IndexError, KeyboardInterrupt): continue
+
+                with Status("[cyan]The Sentinel is gathering intelligence...[/cyan]"):
+                    response = api_client.get_sentinel_briefing(repo_id)
+
+                if response and response.get("briefing"):
+                    console.print(Panel(Markdown(response["briefing"]), title=f"[cyan]🔭 Sentinel Health Briefing for {repo_id}[/cyan]", border_style="cyan"))
+                    context = {"repo_id": repo_id, "repo_url": f"https://github.com/{repo_id.replace('_', '/')}", **response}
+                    next_command, context = _present_next_actions(api_client, "dashboard", context)
+                elif response and response.get("error"):
+                    console.print(Panel(response['error'], title="[red]Sentinel Error[/red]"))
+                else: console.print("[red]❌ The Sentinel did not provide a briefing.[/red]")
+                continue
+
+            elif command.lower() in ("analyze", "a"):
+                if not cli_state.get("model"):
+                    console.print("[bold red]Please select a model first using the 'config' command.[/bold red]")
+                    continue
+
+                repo_url_to_analyze = context.get("repo_url")
+                if not repo_url_to_analyze:
+                    analyzed_repos = find_analyzed_repos()
+                    if analyzed_repos:
+                        console.print(Panel("Select a repository to analyze or ingest a new one.", title="[cyan]Select Repository for Analysis[/cyan]", border_style="cyan"))
+                        table = Table(show_header=False, box=None, padding=(0, 2))
+                        for i, repo in enumerate(analyzed_repos, 1): table.add_row(f"([bold cyan]{i}[/bold cyan])", repo['display_name'])
+                        table.add_row("([bold yellow]N[/bold yellow])", "Analyze a new repository")
+                        console.print(table)
+                        choices = [str(i) for i in range(1, len(analyzed_repos) + 1)] + ['n', 'N']
+                        try:
+                            choice = Prompt.ask("Enter choice", choices=choices, show_choices=False, default='1').lower()
+                            if choice == 'n': repo_url_to_analyze = Prompt.ask("Enter GitHub repository URL").strip()
+                            else: repo_url_to_analyze = analyzed_repos[int(choice) - 1]['url']
+                        except(ValueError, IndexError, KeyboardInterrupt): continue
+                    else:
+                        repo_url_to_analyze = Prompt.ask("Enter GitHub repository URL").strip()
+
+                if not repo_url_to_analyze: continue
 
                 try:
                     session = AnalysisSession(repo_url_to_analyze)
                     if session.start():
                         session.loop()
-                except ValueError as e:
-                    console.print(f"[red]{e}[/red]")
+                except ValueError as e: console.print(f"[red]{e}[/red]")
                 continue
 
-            console.print("[red]❌ Unknown command. Type 'help' for options.[/red]")
+            else:
+                console.print("[red]❌ Unknown command. Type 'help' for options.[/red]")
 
         except KeyboardInterrupt:
             console.print("\n[dim]💤 Interrupted. Type 'exit' to quit.[/dim]")
+            next_command = None
             continue
         except EOFError:
             break

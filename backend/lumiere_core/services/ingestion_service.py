@@ -10,6 +10,7 @@ from typing import Dict, Any
 from ingestion.crawler import IntelligentCrawler
 from ingestion.jsonifier import Jsonifier
 from ingestion.indexing import EmbeddingIndexer
+from . import sentinel_service
 
 def generate_repo_id(repo_url: str, max_length: int = 100) -> str:
     """
@@ -81,31 +82,24 @@ def generate_repo_id(repo_url: str, max_length: int = 100) -> str:
 
 def clone_and_embed_repository(repo_url: str, embedding_model: str = 'snowflake-arctic-embed2:latest') -> Dict[str, Any]:
     """
-    Orchestrates the entire ingestion pipeline, saving all artifacts into a
-    repository-specific subdirectory. This is the single source of truth for ingestion.
+    Orchestrates the entire ingestion pipeline, including the new Sentinel metrics capture.
     """
-    # Use the enhanced repo_id generation
     repo_id = generate_repo_id(repo_url)
-
-    # Define the output directory structure inside the backend
     backend_dir = Path(__file__).resolve().parent.parent.parent
     artifacts_base_dir = backend_dir / "cloned_repositories"
     repo_output_dir = artifacts_base_dir / repo_id
-
-    # Ensure the final destination directory exists
     repo_output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Define the full path for the cortex file within the new directory
     output_cortex_path = repo_output_dir / f"{repo_id}_cortex.json"
+    metrics_path = repo_output_dir / "metrics.json" # <-- DEFINE METRICS FILE PATH
 
     print(f"--- INGESTION SERVICE: Starting for {repo_id} ---")
-    print(f"   -> Original URL: {repo_url}")
-    print(f"   -> Generated repo_id: {repo_id}")
     print(f"   -> Artifacts will be saved to: {repo_output_dir}")
 
     try:
+        project_cortex = None # Initialize
         # --- Step 1: Crawl & Jsonify ---
-        print(f"[1/3] Cloning repository and generating Project Cortex file...")
+        print(f"[1/4] Cloning repository and generating Project Cortex file...")
         with IntelligentCrawler(repo_url=repo_url) as crawler:
             files_to_process = crawler.get_file_paths()
             if not files_to_process:
@@ -122,14 +116,31 @@ def clone_and_embed_repository(repo_url: str, embedding_model: str = 'snowflake-
                 json.dump(project_cortex, f, indent=2)
             print(f"✓ Project Cortex created successfully: {output_cortex_path}")
 
-        # --- Step 2: Index ---
-        print(f"[2/3] Starting vector indexing with model '{embedding_model}'...")
-        # The indexer will now automatically save its files alongside the cortex file.
+            # --- NEW STEP 2: Calculate Sentinel Metrics ---
+            print(f"[2/4] Sentinel: Calculating health metrics...")
+            graph_data = project_cortex.get("architectural_graph", {})
+            latest_metrics = sentinel_service.calculate_snapshot_metrics(crawler.repo_path, graph_data)
+
+            # Load existing metrics and append the new snapshot
+            if metrics_path.exists():
+                with open(metrics_path, 'r', encoding='utf-8') as f:
+                    historical_metrics = json.load(f)
+            else:
+                historical_metrics = []
+
+            historical_metrics.append(latest_metrics)
+
+            with open(metrics_path, 'w', encoding='utf-8') as f:
+                json.dump(historical_metrics, f, indent=2)
+            print("✓ Sentinel: Health metrics saved.")
+
+        # --- Step 3: Index --- (Now step 3)
+        print(f"[3/4] Starting vector indexing with model '{embedding_model}'...")
         indexer = EmbeddingIndexer(model_name=embedding_model)
         indexer.process_cortex(str(output_cortex_path))
         print(f"✓ Vector indexing complete.")
 
-        print(f"[3/3] Ingestion complete. Artifacts preserved in '{repo_output_dir}'.")
+        print(f"[4/4] Ingestion complete.")
 
         return {
             "status": "success",
