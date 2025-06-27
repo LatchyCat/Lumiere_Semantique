@@ -43,13 +43,17 @@ history_path.parent.mkdir(parents=True, exist_ok=True)
 API_BASE_URL = "http://127.0.0.1:8002/api/v1"
 
 # Create command completers for better UX
-main_commands = ['analyze', 'a', 'ask', 'oracle', 'review', 'dashboard', 'd', 'profile', 'p', 'config', 'c', 'help', 'h', 'exit', 'x', 'quit', 'list-repos', 'lr']
+main_commands = ['analyze', 'a', 'ask', 'oracle', 'review', 'dashboard', 'd', 'profile', 'p', 'bom', 'b', 'repo-mgmt', 'rm', 'config', 'c', 'help', 'h', 'exit', 'x', 'quit', 'list-repos', 'lr']
 analysis_commands = ['list', 'l', 'fix', 'f', 'briefing', 'b', 'rca', 'r', 'details', 'd', 'graph', 'g', 'help', 'h', 'back', 'exit', 'quit']
 oracle_commands = ['help', 'h', 'back', 'exit', 'quit']
+bom_commands = ['overview', 'o', 'dependencies', 'deps', 'services', 's', 'security', 'sec', 'compare', 'c', 'regenerate', 'r', 'help', 'h', 'back', 'exit', 'quit']
+repo_commands = ['list', 'l', 'status', 's', 'delete', 'd', 'help', 'h', 'back', 'exit', 'quit']
 
 main_completer = WordCompleter(main_commands, ignore_case=True)
 analysis_completer = WordCompleter(analysis_commands, ignore_case=True)
 oracle_completer = WordCompleter(oracle_commands, ignore_case=True)
+bom_completer = WordCompleter(bom_commands, ignore_case=True)
+repo_completer = WordCompleter(repo_commands, ignore_case=True)
 
 # --- Style for prompt_toolkit prompt to match rich colors ---
 prompt_style = Style.from_dict({
@@ -75,35 +79,47 @@ cli_state = {
 # --- NEW UTILITY FUNCTIONS for managing analyzed repos ---
 
 def check_if_repo_is_analyzed(repo_id: str) -> bool:
-    """Checks if a specific repo_id directory has all the necessary analysis files."""
-    cloned_repos_dir = Path("backend/cloned_repositories")
-    repo_dir = cloned_repos_dir / repo_id
-    if not repo_dir.is_dir():
-        return False
+    """Checks repository analysis status via API instead of filesystem."""
+    api_client = LumiereAPIClient()
+    try:
+        response = api_client.get_repository_status(repo_id)
+        return response and response.get("status") == "complete"
+    except Exception:
+        # Fallback to filesystem check if API fails
+        cloned_repos_dir = Path("backend/cloned_repositories")
+        repo_dir = cloned_repos_dir / repo_id
+        if not repo_dir.is_dir():
+            return False
 
-    cortex_file = repo_dir / f"{repo_id}_cortex.json"
-    faiss_file = repo_dir / f"{repo_id}_faiss.index"
-    map_file = repo_dir / f"{repo_id}_id_map.json"
+        cortex_file = repo_dir / f"{repo_id}_cortex.json"
+        faiss_file = repo_dir / f"{repo_id}_faiss.index"
+        map_file = repo_dir / f"{repo_id}_id_map.json"
 
-    return all([cortex_file.exists(), faiss_file.exists(), map_file.exists()])
+        return all([cortex_file.exists(), faiss_file.exists(), map_file.exists()])
 
 def find_analyzed_repos() -> List[Dict[str, str]]:
-    """Scans for previously analyzed repositories and validates their artifacts."""
-    analyzed_repos = []
-    cloned_repos_dir = Path("backend/cloned_repositories")
-    if not cloned_repos_dir.is_dir():
-        return []
+    """Fetches analyzed repositories from the backend API instead of scanning filesystem."""
+    api_client = LumiereAPIClient()
+    try:
+        response = api_client.list_repositories()
+        return response if response else []
+    except Exception:
+        # Fallback to filesystem scan if API fails
+        analyzed_repos = []
+        cloned_repos_dir = Path("backend/cloned_repositories")
+        if not cloned_repos_dir.is_dir():
+            return []
 
-    for repo_dir in cloned_repos_dir.iterdir():
-        if repo_dir.is_dir():
-            repo_id = repo_dir.name
-            if check_if_repo_is_analyzed(repo_id):
-                # Attempt to reconstruct a user-friendly name and the full URL
-                display_name = repo_id.replace("_", "/", 1)
-                full_url = f"https://github.com/{display_name}"
-                analyzed_repos.append({"repo_id": repo_id, "display_name": display_name, "url": full_url})
+        for repo_dir in cloned_repos_dir.iterdir():
+            if repo_dir.is_dir():
+                repo_id = repo_dir.name
+                if check_if_repo_is_analyzed(repo_id):
+                    # Attempt to reconstruct a user-friendly name and the full URL
+                    display_name = repo_id.replace("_", "/", 1)
+                    full_url = f"https://github.com/{display_name}"
+                    analyzed_repos.append({"repo_id": repo_id, "display_name": display_name, "url": full_url})
 
-    return sorted(analyzed_repos, key=lambda x: x['repo_id'])
+        return sorted(analyzed_repos, key=lambda x: x['repo_id'])
 
 
 def load_config():
@@ -218,7 +234,7 @@ class LumiereAPIClient:
     def get_briefing(self, issue_url: str): return self._request("POST", "briefing/", json={"issue_url": issue_url})
     def get_rca(self, repo_url: str, bug_description: str): return self._request("POST", "rca/", json={"repo_url": repo_url, "bug_description": bug_description})
     def get_profile(self, username: str): return self._request("POST", "profile/review/", json={"username": username})
-    def get_graph(self, repo_id: str): return self._request("GET", f"graph/?repo_id={repo_id}")
+    def get_graph(self, repo_id: str): return self._request("GET", f"graph/{repo_id}/")
     def generate_docstring(self, repo_id: str, code: str, instruction: str): return self._request("POST", "generate-docstring/", json={"repo_id": repo_id, "new_code": code, "instruction": instruction})
     def generate_tests(self, repo_id: str, code_to_test: str, instruction: str): return self._request("POST", "generate-tests/", json={"repo_id": repo_id, "new_code": code_to_test, "instruction": instruction})
     def generate_scaffold(self, repo_id: str, target_files: List[str], instruction: str, rca_report: str, refinement_history: Optional[List[Dict]] = None):
@@ -231,9 +247,36 @@ class LumiereAPIClient:
     def ask_oracle(self, repo_id: str, question: str): return self._request("POST", "oracle/ask/", json={"repo_id": repo_id, "question": question})
     def adjudicate_pr(self, pr_url: str): return self._request("POST", "review/adjudicate/", json={"pr_url": pr_url})
     def harmonize_fix(self, pr_url: str, review_text: str): return self._request("POST", "review/harmonize/", json={"pr_url": pr_url, "review_text": review_text})
-    def get_sentinel_briefing(self, repo_id: str): return self._request("GET", f"sentinel/briefing/?repo_id={repo_id}")
+    def get_sentinel_briefing(self, repo_id: str): return self._request("GET", f"sentinel/briefing/{repo_id}/")
     # --- NEW: Method for the Mission Controller ---
     def get_next_actions(self, last_action: str, result_data: dict): return self._request("POST", "suggest-actions/", json={"last_action": last_action, "result_data": result_data})
+    
+    # --- Repository Management Methods ---
+    def list_repositories(self): return self._request("GET", "repositories/")
+    def get_repository_detail(self, repo_id: str): return self._request("GET", f"repositories/{repo_id}/")
+    def delete_repository(self, repo_id: str): return self._request("DELETE", f"repositories/{repo_id}/")
+    def get_repository_status(self, repo_id: str): return self._request("GET", f"repositories/{repo_id}/status/")
+    
+    # --- BOM (Bill of Materials) Methods ---
+    def get_bom_data(self, repo_id: str, format_type: str = "json"): return self._request("GET", f"bom/?repo_id={repo_id}&format={format_type}")
+    def get_bom_dependencies(self, repo_id: str, **filters): 
+        params = "&".join([f"{k}={v}" for k, v in filters.items() if v is not None])
+        url = f"bom/dependencies/?repo_id={repo_id}"
+        if params: url += "&" + params
+        return self._request("GET", url)
+    def get_bom_services(self, repo_id: str, service_type: str = None): 
+        url = f"bom/services/?repo_id={repo_id}"
+        if service_type: url += f"&service_type={service_type}"
+        return self._request("GET", url)
+    def get_bom_security(self, repo_id: str, severity: str = None): 
+        url = f"bom/security/?repo_id={repo_id}"
+        if severity: url += f"&severity={severity}"
+        return self._request("GET", url)
+    def regenerate_bom(self, repo_id: str, force: bool = False): return self._request("POST", "bom/regenerate/", json={"repo_id": repo_id, "force": force})
+    def compare_bom(self, repo_id_1: str, repo_id_2: str, comparison_type: str = "dependencies"): return self._request("POST", "bom/compare/", json={"repo_id_1": repo_id_1, "repo_id_2": repo_id_2, "comparison_type": comparison_type})
+    
+    # --- Metrics History Method ---
+    def get_sentinel_metrics_history(self, repo_id: str): return self._request("GET", f"sentinel/metrics/{repo_id}/")
 
 
 def _present_next_actions(api_client, last_action: str, context: dict) -> Tuple[Optional[str], dict]:
@@ -359,6 +402,476 @@ class OracleSession:
             completer=main_completer,
             style=prompt_style
         )
+
+
+# --- NEW: BOM Session Manager ---
+class BOMSession:
+    def __init__(self, repo_id: str, repo_url: str):
+        self.repo_id = repo_id
+        self.repo_url = repo_url
+        self.api = LumiereAPIClient()
+        console.print(Panel(
+            f"[bold blue]📦 Bill of Materials Analysis[/bold blue]\n"
+            f"[yellow]Repository:[/yellow] {self.repo_id}\n"
+            f"[yellow]URL:[/yellow] {self.repo_url}\n\n"
+            "[dim]Analyze dependencies, services, security, and more. Type 'help' for commands.[/dim]",
+            border_style="blue"
+        ))
+
+    def loop(self):
+        """Main interactive loop for BOM analysis."""
+        global prompt_session
+        prompt_session = PromptSession(
+            history=FileHistory(str(history_path)),
+            completer=bom_completer,
+            style=prompt_style
+        )
+
+        while True:
+            try:
+                bom_prompt_text = [
+                    ('class:lumiere', 'Lumière'),
+                    ('class:provider', f' (BOM/{self.repo_id})'),
+                    ('class:separator', ' > '),
+                ]
+
+                command = prompt_session.prompt(bom_prompt_text).strip()
+
+                if not command:
+                    continue
+                if command.lower() in ("q", "quit", "exit", "back"):
+                    break
+                if command.lower() in ("h", "help"):
+                    self.display_help()
+                    continue
+
+                self.handle_bom_command(command)
+
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Use 'exit' or 'back' to return to the main menu.[/yellow]")
+                continue
+            except EOFError:
+                break
+
+        console.print("[blue]📦 BOM session ended.[/blue]")
+        # Restore main completer
+        prompt_session = PromptSession(
+            history=FileHistory(str(history_path)),
+            completer=main_completer,
+            style=prompt_style
+        )
+
+    def display_help(self):
+        """Display BOM help commands."""
+        help_table = Table(title="[bold blue]📦 BOM Analysis Commands[/bold blue]", border_style="blue")
+        help_table.add_column("Command", style="bold cyan")
+        help_table.add_column("Description", style="white")
+        
+        help_table.add_row("overview / o", "Complete BOM overview")
+        help_table.add_row("dependencies / deps", "Analyze dependencies")
+        help_table.add_row("services / s", "View services and infrastructure")
+        help_table.add_row("security / sec", "Security analysis")
+        help_table.add_row("compare / c", "Compare with another repository")
+        help_table.add_row("regenerate / r", "Regenerate BOM data")
+        help_table.add_row("help / h", "Show this help menu")
+        help_table.add_row("back / exit / quit", "Return to main menu")
+        
+        console.print(help_table)
+
+    def handle_bom_command(self, command: str):
+        """Handle BOM commands."""
+        cmd = command.lower().strip()
+        
+        if cmd in ("overview", "o"):
+            self.show_overview()
+        elif cmd in ("dependencies", "deps"):
+            self.show_dependencies()
+        elif cmd in ("services", "s"):
+            self.show_services()
+        elif cmd in ("security", "sec"):
+            self.show_security()
+        elif cmd in ("compare", "c"):
+            self.show_compare()
+        elif cmd in ("regenerate", "r"):
+            self.regenerate_bom()
+        else:
+            console.print("[red]❌ Unknown command. Type 'help' for available commands.[/red]")
+
+    def show_overview(self):
+        """Show complete BOM overview."""
+        with Status("[cyan]📦 Retrieving BOM overview...[/cyan]"):
+            bom_data = self.api.get_bom_data(self.repo_id, "summary")
+        
+        if not bom_data:
+            console.print("[red]❌ Could not retrieve BOM data. Repository may not be analyzed.[/red]")
+            return
+        
+        summary = bom_data.get('summary', {})
+        
+        overview_content = f"""[bold]📊 Repository Summary[/bold]
+• Primary Language: {summary.get('primary_language', 'Unknown')}
+• Total Dependencies: {summary.get('total_dependencies', 0)}
+• Total Services: {summary.get('total_services', 0)}
+• Build Tools: {summary.get('total_build_tools', 0)}
+• Languages Detected: {summary.get('languages_detected', 0)}
+• Ecosystems: {', '.join(summary.get('ecosystems', []))}"""
+        
+        console.print(Panel(overview_content, title="[bold blue]📦 BOM Overview[/bold blue]", border_style="blue"))
+
+    def show_dependencies(self):
+        """Show dependency analysis with filtering options."""
+        try:
+            ecosystem = Prompt.ask("Filter by ecosystem (python/javascript/docker or press Enter for all)", default="")
+            dependency_type = Prompt.ask("Filter by type (application/development/testing or press Enter for all)", default="")
+            
+            filters = {}
+            if ecosystem: filters['ecosystem'] = ecosystem
+            if dependency_type: filters['dependency_type'] = dependency_type
+            
+            with Status("[cyan]📦 Analyzing dependencies...[/cyan]"):
+                deps_data = self.api.get_bom_dependencies(self.repo_id, **filters)
+            
+            if not deps_data:
+                console.print("[red]❌ Could not retrieve dependency data.[/red]")
+                return
+            
+            dependencies = deps_data.get('dependencies', [])
+            stats = deps_data.get('statistics', {})
+            
+            if not dependencies:
+                console.print("[yellow]📭 No dependencies found with the specified filters.[/yellow]")
+                return
+            
+            table = Table(title=f"[bold cyan]📦 Dependencies ({len(dependencies)} found)[/bold cyan]", border_style="cyan")
+            table.add_column("Name", style="white")
+            table.add_column("Version", style="green")
+            table.add_column("Type", style="blue")
+            table.add_column("Ecosystem", style="yellow")
+            
+            for dep in dependencies[:20]:  # Show first 20
+                table.add_row(
+                    dep.get('name', 'Unknown'),
+                    dep.get('version', 'Unknown'),
+                    dep.get('category', 'Unknown'),
+                    dep.get('ecosystem', 'Unknown')
+                )
+            
+            if len(dependencies) > 20:
+                table.add_row("...", f"({len(dependencies) - 20} more)", "...", "...")
+            
+            console.print(table)
+            
+            if stats:
+                stats_content = f"📊 **Statistics:**\n"
+                for ecosystem, count in stats.get('ecosystems', {}).items():
+                    stats_content += f"• {ecosystem.capitalize()}: {count} dependencies\n"
+                console.print(Panel(stats_content, title="[cyan]📊 Dependency Statistics[/cyan]", border_style="cyan"))
+                
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Dependency analysis cancelled.[/yellow]")
+
+    def show_services(self):
+        """Show services and infrastructure analysis."""
+        with Status("[cyan]🏗️ Analyzing services and infrastructure...[/cyan]"):
+            services_data = self.api.get_bom_services(self.repo_id)
+        
+        if not services_data:
+            console.print("[red]❌ Could not retrieve services data.[/red]")
+            return
+        
+        services = services_data.get('services', [])
+        infrastructure = services_data.get('infrastructure_analysis', {})
+        
+        if not services:
+            console.print("[yellow]🏗️ No services detected in this repository.[/yellow]")
+        else:
+            table = Table(title="[bold green]🏗️ Detected Services[/bold green]", border_style="green")
+            table.add_column("Service", style="white")
+            table.add_column("Version", style="green")
+            table.add_column("Type", style="blue")
+            table.add_column("Source", style="yellow")
+            
+            for service in services:
+                table.add_row(
+                    service.get('name', 'Unknown'),
+                    service.get('version', 'Unknown'),
+                    service.get('service_type', 'Unknown'),
+                    service.get('source', 'Unknown')
+                )
+            
+            console.print(table)
+        
+        if infrastructure:
+            infra_content = "🏗️ **Infrastructure Analysis:**\n"
+            if infrastructure.get('containerized'):
+                infra_content += "• ✅ Containerized deployment detected\n"
+            
+            for infra_type, items in infrastructure.items():
+                if isinstance(items, list) and items:
+                    infra_content += f"• {infra_type.replace('_', ' ').title()}: {len(items)} found\n"
+            
+            console.print(Panel(infra_content, title="[green]🏗️ Infrastructure[/green]", border_style="green"))
+
+    def show_security(self):
+        """Show security analysis."""
+        with Status("[cyan]🔒 Performing security analysis...[/cyan]"):
+            security_data = self.api.get_bom_security(self.repo_id)
+        
+        if not security_data:
+            console.print("[red]❌ Could not retrieve security data.[/red]")
+            return
+        
+        summary = security_data.get('summary', {})
+        recommendations = security_data.get('security_recommendations', [])
+        compliance = security_data.get('compliance_status', {})
+        
+        security_content = f"""🔒 **Security Summary:**
+• Total Dependencies Scanned: {summary.get('total_dependencies', 0)}
+• High Risk Dependencies: {summary.get('high_risk_dependencies', 0)}
+• Last Scan: {summary.get('last_scan', 'Never')}
+
+🛡️ **Compliance Status:**
+• Overall Compliant: {'✅ Yes' if compliance.get('compliant') else '❌ No'}"""
+        
+        if compliance.get('checks'):
+            for check, status in compliance.get('checks', {}).items():
+                emoji = "✅" if status == "pass" else "❌"
+                security_content += f"\n• {check.replace('_', ' ').title()}: {emoji} {status}"
+        
+        console.print(Panel(security_content, title="[bold red]🔒 Security Analysis[/bold red]", border_style="red"))
+        
+        if recommendations:
+            rec_content = "\n".join([f"• {rec}" for rec in recommendations])
+            console.print(Panel(rec_content, title="[yellow]💡 Security Recommendations[/yellow]", border_style="yellow"))
+
+    def show_compare(self):
+        """Compare BOM with another repository."""
+        try:
+            analyzed_repos = find_analyzed_repos()
+            other_repos = [repo for repo in analyzed_repos if repo['repo_id'] != self.repo_id]
+            
+            if not other_repos:
+                console.print("[yellow]No other analyzed repositories found for comparison.[/yellow]")
+                return
+            
+            console.print("Select a repository to compare with:")
+            table = Table(show_header=False, box=None, padding=(0, 2))
+            for i, repo in enumerate(other_repos, 1):
+                table.add_row(f"([bold cyan]{i}[/bold cyan])", repo['display_name'])
+            console.print(table)
+            
+            choice = Prompt.ask("Enter choice", choices=[str(i) for i in range(1, len(other_repos) + 1)], show_choices=False, default='1')
+            other_repo_id = other_repos[int(choice) - 1]['repo_id']
+            
+            comparison_type = Prompt.ask("Comparison type", choices=["dependencies", "services", "languages", "comprehensive"], default="dependencies")
+            
+            with Status(f"[cyan]📊 Comparing {self.repo_id} with {other_repo_id}...[/cyan]"):
+                comparison_data = self.api.compare_bom(self.repo_id, other_repo_id, comparison_type)
+            
+            if not comparison_data:
+                console.print("[red]❌ Could not perform comparison.[/red]")
+                return
+            
+            comparison = comparison_data.get('comparison', {})
+            
+            comp_content = f"""📊 **BOM Comparison Results:**
+**Repositories:** {self.repo_id} vs {other_repo_id}
+**Comparison Type:** {comparison_type.title()}
+
+🔍 **Common Items:** {len(comparison.get('common', []))}
+🔹 **Unique to {self.repo_id}:** {len(comparison.get('unique_to_repo_1', []))}
+🔸 **Unique to {other_repo_id}:** {len(comparison.get('unique_to_repo_2', []))}"""
+            
+            console.print(Panel(comp_content, title="[bold magenta]📊 BOM Comparison[/bold magenta]", border_style="magenta"))
+            
+        except (KeyboardInterrupt, ValueError, IndexError):
+            console.print("\n[yellow]Comparison cancelled.[/yellow]")
+
+    def regenerate_bom(self):
+        """Regenerate BOM data."""
+        try:
+            force = Confirm.ask("Force regeneration even if BOM is recent?", default=False)
+            
+            with Status("[cyan]🔄 Regenerating BOM data...[/cyan]"):
+                result = self.api.regenerate_bom(self.repo_id, force)
+            
+            if result and result.get('regenerated'):
+                console.print("[green]✅ BOM data regenerated successfully.[/green]")
+            elif result and result.get('message'):
+                console.print(Panel(result['message'], title="[yellow]BOM Regeneration[/yellow]", border_style="yellow"))
+            else:
+                console.print("[red]❌ Failed to regenerate BOM data.[/red]")
+                
+        except KeyboardInterrupt:
+            console.print("\n[yellow]BOM regeneration cancelled.[/yellow]")
+
+
+# --- NEW: Repository Management Session ---
+class RepositoryManagementSession:
+    def __init__(self):
+        self.api = LumiereAPIClient()
+        console.print(Panel(
+            f"[bold green]🗃️ Repository Management[/bold green]\n\n"
+            "[dim]Manage analyzed repositories. Type 'help' for commands.[/dim]",
+            border_style="green"
+        ))
+
+    def loop(self):
+        """Main interactive loop for repository management."""
+        global prompt_session
+        prompt_session = PromptSession(
+            history=FileHistory(str(history_path)),
+            completer=repo_completer,
+            style=prompt_style
+        )
+
+        while True:
+            try:
+                repo_prompt_text = [
+                    ('class:lumiere', 'Lumière'),
+                    ('class:provider', ' (Repo-Mgmt)'),
+                    ('class:separator', ' > '),
+                ]
+
+                command = prompt_session.prompt(repo_prompt_text).strip()
+
+                if not command:
+                    continue
+                if command.lower() in ("q", "quit", "exit", "back"):
+                    break
+                if command.lower() in ("h", "help"):
+                    self.display_help()
+                    continue
+
+                self.handle_repo_command(command)
+
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Use 'exit' or 'back' to return to the main menu.[/yellow]")
+                continue
+            except EOFError:
+                break
+
+        console.print("[green]🗃️ Repository management session ended.[/green]")
+        # Restore main completer
+        prompt_session = PromptSession(
+            history=FileHistory(str(history_path)),
+            completer=main_completer,
+            style=prompt_style
+        )
+
+    def display_help(self):
+        """Display repository management help commands."""
+        help_table = Table(title="[bold green]🗃️ Repository Management Commands[/bold green]", border_style="green")
+        help_table.add_column("Command", style="bold cyan")
+        help_table.add_column("Description", style="white")
+        
+        help_table.add_row("list / l", "List all analyzed repositories")
+        help_table.add_row("status / s", "Check repository analysis status")
+        help_table.add_row("delete / d", "Delete repository data")
+        help_table.add_row("help / h", "Show this help menu")
+        help_table.add_row("back / exit / quit", "Return to main menu")
+        
+        console.print(help_table)
+
+    def handle_repo_command(self, command: str):
+        """Handle repository management commands."""
+        cmd = command.lower().strip()
+        
+        if cmd in ("list", "l"):
+            self.list_repositories()
+        elif cmd in ("status", "s"):
+            self.check_status()
+        elif cmd in ("delete", "d"):
+            self.delete_repository()
+        else:
+            console.print("[red]❌ Unknown command. Type 'help' for available commands.[/red]")
+
+    def list_repositories(self):
+        """List all analyzed repositories."""
+        with Status("[cyan]🗃️ Fetching repository list...[/cyan]"):
+            repos = self.api.list_repositories()
+        
+        if not repos:
+            console.print("[yellow]📭 No analyzed repositories found.[/yellow]")
+            return
+        
+        table = Table(title=f"[bold green]🗃️ Analyzed Repositories ({len(repos)} found)[/bold green]", border_style="green")
+        table.add_column("Repository", style="white")
+        table.add_column("Display Name", style="cyan")
+        table.add_column("URL", style="blue")
+        
+        for repo in repos:
+            table.add_row(
+                repo.get('repo_id', 'Unknown'),
+                repo.get('display_name', 'Unknown'),
+                repo.get('url', 'Unknown')
+            )
+        
+        console.print(table)
+
+    def check_status(self):
+        """Check repository analysis status."""
+        try:
+            repo_id = Prompt.ask("Enter repository ID to check")
+            
+            with Status(f"[cyan]🔍 Checking status of {repo_id}...[/cyan]"):
+                status_data = self.api.get_repository_status(repo_id)
+                detail_data = self.api.get_repository_detail(repo_id)
+            
+            if not status_data:
+                console.print(f"[red]❌ Repository '{repo_id}' not found.[/red]")
+                return
+            
+            status = status_data.get('status', 'unknown')
+            status_emoji = "✅" if status == "complete" else "❌"
+            
+            status_content = f"""🔍 **Repository Status**
+• Repository ID: {repo_id}
+• Analysis Status: {status_emoji} {status.title()}"""
+            
+            if detail_data:
+                metadata = detail_data.get('metadata', {})
+                status_content += f"""
+• Files Analyzed: {metadata.get('total_files', 'Unknown')}
+• Analysis Date: {metadata.get('analysis_date', 'Unknown')}
+• Primary Language: {metadata.get('primary_language', 'Unknown')}"""
+            
+            console.print(Panel(status_content, title=f"[bold cyan]🔍 Status: {repo_id}[/bold cyan]", border_style="cyan"))
+            
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Status check cancelled.[/yellow]")
+
+    def delete_repository(self):
+        """Delete repository data."""
+        try:
+            analyzed_repos = find_analyzed_repos()
+            if not analyzed_repos:
+                console.print("[yellow]📭 No repositories available to delete.[/yellow]")
+                return
+            
+            console.print("Select a repository to delete:")
+            table = Table(show_header=False, box=None, padding=(0, 2))
+            for i, repo in enumerate(analyzed_repos, 1):
+                table.add_row(f"([bold red]{i}[/bold red])", repo['display_name'])
+            console.print(table)
+            
+            choice = Prompt.ask("Enter choice", choices=[str(i) for i in range(1, len(analyzed_repos) + 1)], show_choices=False, default='1')
+            selected_repo = analyzed_repos[int(choice) - 1]
+            
+            if not Confirm.ask(f"[bold red]Are you sure you want to delete '{selected_repo['display_name']}'?[/bold red]", default=False):
+                console.print("[yellow]Deletion cancelled.[/yellow]")
+                return
+            
+            with Status(f"[red]🗑️ Deleting {selected_repo['repo_id']}...[/red]"):
+                result = self.api.delete_repository(selected_repo['repo_id'])
+            
+            if result is not None:  # 204 No Content returns None but is success
+                console.print(f"[green]✅ Repository '{selected_repo['display_name']}' deleted successfully.[/green]")
+            else:
+                console.print(f"[red]❌ Failed to delete repository.[/red]")
+                
+        except (KeyboardInterrupt, ValueError, IndexError):
+            console.print("\n[yellow]Repository deletion cancelled.[/yellow]")
 
 
 # --- MODIFIED: Implemented a two-step provider/model selection process. ---
@@ -1150,6 +1663,8 @@ def display_interactive_help(context: str = 'main'):
         help_table.add_row("review", "Perform an AI-powered review of a Pull Request")
         help_table.add_row("dashboard / d", "View the project health dashboard")
         help_table.add_row("profile / p", "Get GitHub user profile analysis")
+        help_table.add_row("bom / b", "Bill of Materials analysis for a repository")
+        help_table.add_row("repo-mgmt / rm", "Repository management (list, delete, status)")
 
         # --- DYNAMIC HELP TEXT ---
         if cli_state.get("model"):
@@ -1341,6 +1856,42 @@ def run():
 
                 if response and response.get("briefing"):
                     console.print(Panel(Markdown(response["briefing"]), title=f"[cyan]🔭 Sentinel Health Briefing for {repo_id}[/cyan]", border_style="cyan"))
+                    
+                    # Offer to show historical metrics
+                    try:
+                        if Confirm.ask("[dim]Would you like to view historical metrics data?[/dim]", default=False):
+                            with Status("[cyan]📊 Retrieving metrics history...[/cyan]"):
+                                metrics_history = api_client.get_sentinel_metrics_history(repo_id)
+                            
+                            if metrics_history and len(metrics_history) > 1:
+                                # Show trends over time
+                                latest = metrics_history[-1]
+                                oldest = metrics_history[0] 
+                                
+                                trends_content = f"""📊 **Metrics History Analysis**
+**Data Points:** {len(metrics_history)} snapshots
+**Time Span:** {oldest.get('timestamp', 'Unknown')} → {latest.get('timestamp', 'Now')}
+
+**Key Trends:**"""
+                                
+                                # Calculate trends for numeric fields
+                                for key in latest.keys():
+                                    if isinstance(latest.get(key), (int, float)) and key in oldest:
+                                        old_val = oldest[key]
+                                        new_val = latest[key] 
+                                        if old_val != 0:
+                                            change = ((new_val - old_val) / abs(old_val)) * 100
+                                            trend_emoji = "📈" if change > 0 else "📉" if change < 0 else "➡️"
+                                            trends_content += f"\n• {key.replace('_', ' ').title()}: {old_val} → {new_val} {trend_emoji} ({change:+.1f}%)"
+                                
+                                console.print(Panel(trends_content, title="[bold yellow]📊 Historical Metrics[/bold yellow]", border_style="yellow"))
+                            elif metrics_history:
+                                console.print("[yellow]📊 Only one metrics snapshot available. Historical analysis requires multiple data points.[/yellow]")
+                            else:
+                                console.print("[red]❌ Could not retrieve metrics history.[/red]")
+                    except KeyboardInterrupt:
+                        pass
+                    
                     context = {"repo_id": repo_id, "repo_url": f"https://github.com/{repo_id.replace('_', '/')}", **response}
                     next_command, context = _present_next_actions(api_client, "dashboard", context)
                 elif response and response.get("error"):
@@ -1378,6 +1929,42 @@ def run():
                     if session.start():
                         session.loop()
                 except ValueError as e: console.print(f"[red]{e}[/red]")
+                continue
+
+            elif command.lower() in ("bom", "b"):
+                if not cli_state.get("model"):
+                    console.print("[bold red]Please select a model first using the 'config' command.[/bold red]")
+                    continue
+
+                analyzed_repos = find_analyzed_repos()
+                if not analyzed_repos:
+                    console.print("[yellow]No analyzed repositories found. Use 'analyze' to ingest a repo first.[/yellow]")
+                    continue
+                
+                console.print(Panel("Select a repository for BOM analysis.", title="[blue]📦 Bill of Materials Analysis[/blue]", border_style="blue"))
+                table = Table(show_header=False, box=None, padding=(0, 2))
+                for i, repo in enumerate(analyzed_repos, 1): 
+                    table.add_row(f"([bold cyan]{i}[/bold cyan])", repo['display_name'])
+                console.print(table)
+                
+                try:
+                    choice = Prompt.ask("Enter choice", choices=[str(i) for i in range(1, len(analyzed_repos) + 1)], show_choices=False, default='1')
+                    selected_repo = analyzed_repos[int(choice) - 1]
+                    
+                    bom_session = BOMSession(selected_repo['repo_id'], selected_repo['url'])
+                    bom_session.loop()
+                    context = {}
+                except (ValueError, IndexError, KeyboardInterrupt): 
+                    continue
+
+            elif command.lower() in ("repo-mgmt", "rm"):
+                if not cli_state.get("model"):
+                    console.print("[bold red]Please select a model first using the 'config' command.[/bold red]")
+                    continue
+
+                repo_mgmt_session = RepositoryManagementSession()
+                repo_mgmt_session.loop()
+                context = {}
                 continue
 
             else:
