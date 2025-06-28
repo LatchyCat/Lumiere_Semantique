@@ -9,29 +9,47 @@ import re
 import shlex
 import difflib
 import traceback
-from typing import Optional, List, Dict, Tuple
+import os
+import asyncio
+import threading
+from typing import Optional, List, Dict, Tuple, Any
 from collections import defaultdict
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
-from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeRemainingColumn, TimeElapsedColumn
 from rich.markdown import Markdown
 from rich.text import Text
 from rich.status import Status
 from rich.live import Live
 from rich.align import Align
+from rich.columns import Columns
+from rich.layout import Layout
+from rich.syntax import Syntax
+from rich.rule import Rule
+from rich.spinner import Spinner
+from rich.box import ROUNDED, DOUBLE, SIMPLE
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
-from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.completion import WordCompleter, FuzzyCompleter, NestedCompleter
 from prompt_toolkit.shortcuts import confirm
 from prompt_toolkit.styles import Style
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from pathlib import Path
 import json
 import time
 from datetime import datetime
 import textwrap
 from rich.tree import Tree
+from fuzzywuzzy import fuzz, process
+try:
+    import questionary
+except ImportError:
+    questionary = None
 
 # --- Global Objects & Configuration ---
 console = Console()
@@ -43,30 +61,20 @@ history_path.parent.mkdir(parents=True, exist_ok=True)
 API_BASE_URL = "http://127.0.0.1:8002/api/v1"
 
 # Create command completers for better UX
-main_commands = ['analyze', 'a', 'ask', 'oracle', 'review', 'dashboard', 'd', 'profile', 'p', 'bom', 'b', 'repo-mgmt', 'rm', 'config', 'c', 'help', 'h', 'exit', 'x', 'quit', 'list-repos', 'lr']
-analysis_commands = ['list', 'l', 'fix', 'f', 'briefing', 'b', 'rca', 'r', 'details', 'd', 'graph', 'g', 'help', 'h', 'back', 'exit', 'quit']
+main_commands = ['analyze', 'a', 'ask', 'oracle', 'dance', 'da', 'summon', 'su', 'review', 'dashboard', 'd', 'profile', 'p', 'bom', 'b', 'onboard', 'o', 'repo-mgmt', 'rm', 'quartermaster', 'qm', 'loremaster', 'lm', 'librarian', 'lib', 'config', 'c', 'help', 'h', 'exit', 'x', 'quit', 'list-repos', 'lr']
+analysis_commands = ['list', 'l', 'fix', 'f', 'briefing', 'b', 'rca', 'r', 'details', 'd', 'graph', 'g', 'mage', 'm', 'help', 'h', 'back', 'exit', 'quit']
 oracle_commands = ['help', 'h', 'back', 'exit', 'quit']
 bom_commands = ['overview', 'o', 'dependencies', 'deps', 'services', 's', 'security', 'sec', 'compare', 'c', 'regenerate', 'r', 'help', 'h', 'back', 'exit', 'quit']
+onboard_commands = ['scout', 's', 'expert', 'e', 'guide', 'g', 'help', 'h', 'back', 'exit', 'quit']
 repo_commands = ['list', 'l', 'status', 's', 'delete', 'd', 'help', 'h', 'back', 'exit', 'quit']
 
-main_completer = WordCompleter(main_commands, ignore_case=True)
-analysis_completer = WordCompleter(analysis_commands, ignore_case=True)
-oracle_completer = WordCompleter(oracle_commands, ignore_case=True)
-bom_completer = WordCompleter(bom_commands, ignore_case=True)
-repo_completer = WordCompleter(repo_commands, ignore_case=True)
-
-# --- Style for prompt_toolkit prompt to match rich colors ---
-prompt_style = Style.from_dict({
-    'lumiere': 'bold #00ffff',  # bold cyan
-    'provider': 'yellow',
-    'separator': 'white'
-})
-
-prompt_session = PromptSession(
-    history=FileHistory(str(history_path)),
-    completer=main_completer,
-    style=prompt_style
-)
+# Basic completers (enhanced completers will be created later)
+main_completer = FuzzyCompleter(WordCompleter(main_commands, ignore_case=True))
+analysis_completer = FuzzyCompleter(WordCompleter(analysis_commands, ignore_case=True))
+oracle_completer = FuzzyCompleter(WordCompleter(oracle_commands, ignore_case=True))
+bom_completer = FuzzyCompleter(WordCompleter(bom_commands, ignore_case=True))
+onboard_completer = FuzzyCompleter(WordCompleter(onboard_commands, ignore_case=True))
+repo_completer = FuzzyCompleter(WordCompleter(repo_commands, ignore_case=True))
 
 # --- Global CLI State ---
 cli_state = {
@@ -74,7 +82,473 @@ cli_state = {
     "available_models": [],
     "last_repo_url": None,
     "debug_mode": False,
+    "theme": "modern",
+    "animations_enabled": True,
+    "notifications": [],
+    "active_operations": [],
+    "command_history": [],
 }
+
+# --- Modern CLI Enhancements ---
+
+class ThemeManager:
+    """Manages different CLI themes for a modern experience."""
+    
+    THEMES = {
+        "modern": {
+            "primary": "#00d4aa",
+            "secondary": "#ff6b6b", 
+            "accent": "#ffd93d",
+            "text": "#ffffff",
+            "dim": "#888888",
+            "success": "#00ff88",
+            "warning": "#ffb347",
+            "error": "#ff4757",
+            "background": "#1a1a1a"
+        },
+        "cyberpunk": {
+            "primary": "#00ffff",
+            "secondary": "#ff00ff",
+            "accent": "#ffff00", 
+            "text": "#ffffff",
+            "dim": "#666666",
+            "success": "#39ff14",
+            "warning": "#ff6600",
+            "error": "#ff0040",
+            "background": "#0d0d0d"
+        },
+        "minimal": {
+            "primary": "#6366f1",
+            "secondary": "#8b5cf6",
+            "accent": "#06b6d4",
+            "text": "#f8fafc",
+            "dim": "#64748b", 
+            "success": "#10b981",
+            "warning": "#f59e0b",
+            "error": "#ef4444",
+            "background": "#0f172a"
+        }
+    }
+    
+    @classmethod
+    def get_style(cls, theme_name: str = "modern") -> Style:
+        """Get prompt_toolkit style for the given theme."""
+        theme = cls.THEMES.get(theme_name, cls.THEMES["modern"])
+        return Style.from_dict({
+            'lumiere': f'bold {theme["primary"]}',
+            'provider': theme["secondary"],
+            'separator': theme["accent"],
+            'command': theme["text"],
+            'hint': theme["dim"],
+            'success': theme["success"],
+            'warning': theme["warning"],
+            'error': theme["error"]
+        })
+
+class AnimationManager:
+    """Handles smooth animations and transitions."""
+    
+    @staticmethod
+    def typing_effect(text: str, delay: float = 0.03):
+        """Create a typing effect for text output."""
+        if not cli_state.get("animations_enabled", True):
+            console.print(text)
+            return
+            
+        for char in text:
+            console.print(char, end="")
+            time.sleep(delay)
+        console.print()
+    
+    @staticmethod 
+    def fade_in_panel(content: str, title: str = "", delay: float = 0.1):
+        """Fade in a panel with animation."""
+        if not cli_state.get("animations_enabled", True):
+            console.print(Panel(content, title=title, box=ROUNDED))
+            return
+            
+        lines = content.split('\n')
+        with Live(Panel("", title=title, box=ROUNDED), console=console, refresh_per_second=10) as live:
+            displayed_lines = []
+            for line in lines:
+                displayed_lines.append(line)
+                live.update(Panel('\n'.join(displayed_lines), title=title, box=ROUNDED))
+                time.sleep(delay)
+
+class FuzzyCommandCompleter:
+    """Advanced fuzzy matching completer for commands."""
+    
+    def __init__(self, commands: List[str]):
+        self.commands = commands
+        self.command_descriptions = {
+            'analyze': 'Deep analysis of repository structure and patterns',
+            'ask': 'Interactive Q&A about your codebase',
+            'oracle': 'AI-powered code insights and recommendations', 
+            'dance': 'Dynamic code transformations and refactoring',
+            'summon': 'Generate new code components and features',
+            'dashboard': 'Overview of repository metrics and health',
+            'profile': 'Performance analysis and optimization suggestions',
+            'bom': 'Bill of Materials - dependency analysis',
+            'onboard': 'Interactive onboarding for new developers',
+            'repo-mgmt': 'Repository management and operations',
+            'quartermaster': 'Resource and dependency management',
+            'loremaster': 'Knowledge base and documentation tools',
+            'librarian': 'Code organization and categorization',
+            'config': 'Configuration and settings management'
+        }
+    
+    def get_matches(self, text: str, limit: int = 5) -> List[Tuple[str, str]]:
+        """Get fuzzy matches with descriptions."""
+        if not text:
+            return [(cmd, self.command_descriptions.get(cmd, "")) for cmd in self.commands[:limit]]
+        
+        matches = process.extract(text, self.commands, limit=limit, scorer=fuzz.partial_ratio)
+        return [(match[0], self.command_descriptions.get(match[0], "")) for match in matches if match[1] > 30]
+
+class ProgressBarManager:
+    """Enhanced progress bars with status updates."""
+    
+    @staticmethod
+    def create_modern_progress() -> Progress:
+        """Create a modern-looking progress bar."""
+        return Progress(
+            SpinnerColumn(style="cyan"),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(bar_width=40, style="cyan", complete_style="green"),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            console=console,
+            transient=False
+        )
+    
+    @staticmethod
+    def show_operation_status(operation: str, steps: List[str]):
+        """Show a multi-step operation with progress."""
+        with ProgressBarManager.create_modern_progress() as progress:
+            task = progress.add_task(operation, total=len(steps))
+            for i, step in enumerate(steps):
+                progress.update(task, description=f"[cyan]{step}[/cyan]", completed=i)
+                time.sleep(0.5)  # Simulate work
+            progress.update(task, description=f"[green]✓ {operation} Complete[/green]", completed=len(steps))
+
+class NotificationManager:
+    """Real-time notification system."""
+    
+    @staticmethod
+    def add_notification(message: str, type: str = "info", duration: int = 5):
+        """Add a notification to the queue."""
+        notification = {
+            "message": message,
+            "type": type,
+            "timestamp": datetime.now(),
+            "duration": duration
+        }
+        cli_state["notifications"].append(notification)
+        NotificationManager.show_notification(notification)
+    
+    @staticmethod
+    def show_notification(notification: Dict):
+        """Display a notification with styling."""
+        type_styles = {
+            "info": "blue",
+            "success": "green", 
+            "warning": "yellow",
+            "error": "red"
+        }
+        style = type_styles.get(notification["type"], "blue")
+        icon = {"info": "ℹ", "success": "✓", "warning": "⚠", "error": "✗"}[notification["type"]]
+        
+        console.print(f"[{style}]{icon} {notification['message']}[/{style}]")
+
+class KeyboardShortcuts:
+    """Keyboard shortcuts and hotkeys."""
+    
+    @staticmethod
+    def create_key_bindings() -> KeyBindings:
+        """Create custom key bindings for enhanced UX."""
+        kb = KeyBindings()
+        
+        @kb.add('c-d')  # Ctrl+D for dashboard
+        def _(event):
+            event.app.exit(result='dashboard')
+        
+        @kb.add('c-h')  # Ctrl+H for help
+        def _(event):
+            event.app.exit(result='help')
+        
+        @kb.add('c-r')  # Ctrl+R for repo management
+        def _(event):
+            event.app.exit(result='repo-mgmt')
+        
+        @kb.add('c-a')  # Ctrl+A for analyze
+        def _(event):
+            event.app.exit(result='analyze')
+        
+        return kb
+
+class CommandPreview:
+    """Live command preview and validation."""
+    
+    @staticmethod
+    def preview_command(command: str) -> str:
+        """Generate a preview of what the command will do."""
+        previews = {
+            'analyze': "🔍 Start deep analysis of repository structure",
+            'ask': "💭 Enter interactive Q&A mode", 
+            'oracle': "🔮 Get AI-powered insights",
+            'dance': "💫 Begin code transformation wizard",
+            'summon': "⚡ Open code generation interface",
+            'dashboard': "📊 Display repository dashboard",
+            'profile': "⚡ Show performance analysis",
+            'bom': "📋 Generate Bill of Materials",
+            'onboard': "🎓 Start onboarding assistant",
+            'repo-mgmt': "🗂️ Open repository management",
+            'config': "⚙️ Configure settings"
+        }
+        
+        base_cmd = command.split()[0] if command else ""
+        return previews.get(base_cmd, f"Execute: {command}" if command else "")
+
+class ModernDashboard:
+    """Enhanced dashboard with real-time metrics."""
+    
+    @staticmethod
+    def create_layout() -> Layout:
+        """Create a modern dashboard layout."""
+        layout = Layout()
+        
+        layout.split_column(
+            Layout(name="header", size=3),
+            Layout(name="body"),
+            Layout(name="footer", size=3)
+        )
+        
+        layout["body"].split_row(
+            Layout(name="left"),
+            Layout(name="right")
+        )
+        
+        return layout
+    
+    @staticmethod
+    def show_dashboard():
+        """Display the modern dashboard."""
+        layout = ModernDashboard.create_layout()
+        
+        # Header
+        layout["header"].update(Panel(
+            Align.center("[bold cyan]Lumière Sémantique[/bold cyan] [dim]- Modern Code Intelligence Platform[/dim]"),
+            style="cyan"
+        ))
+        
+        # Left panel - Quick actions
+        quick_actions = Table(title="Quick Actions", box=SIMPLE)
+        quick_actions.add_column("Shortcut", style="cyan")
+        quick_actions.add_column("Action", style="white")
+        quick_actions.add_row("Ctrl+A", "Analyze Repository")
+        quick_actions.add_row("Ctrl+D", "Dashboard")
+        quick_actions.add_row("Ctrl+H", "Help")
+        quick_actions.add_row("Ctrl+R", "Repo Management")
+        
+        layout["left"].update(Panel(quick_actions, title="🚀 Quick Access"))
+        
+        # Right panel - Recent activity
+        activity = Table(title="Recent Activity", box=SIMPLE)
+        activity.add_column("Time", style="dim")
+        activity.add_column("Activity", style="white")
+        
+        for cmd in cli_state.get("command_history", [])[-5:]:
+            activity.add_row(cmd.get("time", ""), cmd.get("command", ""))
+        
+        layout["right"].update(Panel(activity, title="📈 Activity"))
+        
+        # Footer
+        layout["footer"].update(Panel(
+            Align.center("[dim]Use arrow keys to navigate • Press Enter to select • Type to search[/dim]"),
+            style="dim"
+        ))
+        
+        console.print(layout)
+
+class SyntaxHighlighter:
+    """Syntax highlighting for commands and code."""
+    
+    @staticmethod
+    def highlight_command(command: str) -> str:
+        """Add syntax highlighting to commands."""
+        keywords = ['analyze', 'ask', 'oracle', 'dance', 'summon', 'dashboard', 'profile', 'bom', 'onboard', 'repo-mgmt']
+        flags = ['-v', '--verbose', '-h', '--help', '-f', '--force']
+        
+        highlighted = command
+        for keyword in keywords:
+            highlighted = highlighted.replace(keyword, f"[bold cyan]{keyword}[/bold cyan]")
+        for flag in flags:
+            highlighted = highlighted.replace(flag, f"[yellow]{flag}[/yellow]")
+        
+        return highlighted
+    
+    @staticmethod
+    def highlight_code(code: str, language: str = "python") -> Syntax:
+        """Create syntax highlighted code display."""
+        return Syntax(code, language, theme="monokai", line_numbers=True, background_color="default")
+
+class EnhancedHelp:
+    """Contextual help system with search."""
+    
+    HELP_CONTENT = {
+        'analyze': {
+            'description': 'Deep analysis of repository structure and patterns',
+            'usage': 'analyze [options] [repository]',
+            'examples': [
+                'analyze https://github.com/user/repo',
+                'analyze --verbose ./local-repo',
+                'analyze -f --force-refresh'
+            ],
+            'flags': {
+                '-v, --verbose': 'Enable verbose output',
+                '-f, --force': 'Force re-analysis of existing repo',
+                '--depth <n>': 'Set analysis depth (1-5)'
+            }
+        },
+        'dashboard': {
+            'description': 'Interactive dashboard with repository metrics',
+            'usage': 'dashboard [options]',
+            'examples': [
+                'dashboard',
+                'dashboard --theme cyberpunk',
+                'dashboard --refresh-rate 5'
+            ],
+            'flags': {
+                '--theme <name>': 'Set dashboard theme (modern, cyberpunk, minimal)',
+                '--refresh-rate <n>': 'Auto-refresh interval in seconds'
+            }
+        }
+    }
+    
+    @staticmethod
+    def show_contextual_help(command: str = None):
+        """Show contextual help based on current context."""
+        if command and command in EnhancedHelp.HELP_CONTENT:
+            help_data = EnhancedHelp.HELP_CONTENT[command]
+            
+            panel_content = f"""[bold]{help_data['description']}[/bold]
+
+[cyan]Usage:[/cyan]
+  {help_data['usage']}
+
+[cyan]Examples:[/cyan]"""
+            
+            for example in help_data['examples']:
+                panel_content += f"\n  {SyntaxHighlighter.highlight_command(example)}"
+            
+            if help_data.get('flags'):
+                panel_content += "\n\n[cyan]Flags:[/cyan]"
+                for flag, desc in help_data['flags'].items():
+                    panel_content += f"\n  [yellow]{flag}[/yellow] - {desc}"
+            
+            AnimationManager.fade_in_panel(panel_content, f"Help: {command}", 0.05)
+        else:
+            EnhancedHelp.show_general_help()
+    
+    @staticmethod
+    def show_general_help():
+        """Show general help with all commands."""
+        help_table = Table(title="Lumière Sémantique Commands", box=ROUNDED)
+        help_table.add_column("Command", style="cyan", width=15)
+        help_table.add_column("Description", style="white", width=40)
+        help_table.add_column("Shortcut", style="yellow", width=10)
+        
+        commands_info = [
+            ("analyze", "Deep repository analysis", "a"),
+            ("ask", "Interactive Q&A about code", ""),
+            ("oracle", "AI-powered insights", ""),
+            ("dance", "Code transformation", "da"),
+            ("summon", "Generate new code", "su"),
+            ("dashboard", "Metrics overview", "d"),
+            ("profile", "Performance analysis", "p"),
+            ("bom", "Bill of Materials", "b"),
+            ("onboard", "Developer onboarding", "o"),
+            ("repo-mgmt", "Repository management", "rm"),
+        ]
+        
+        for cmd, desc, shortcut in commands_info:
+            help_table.add_row(cmd, desc, shortcut)
+        
+        console.print("\n")
+        console.print(help_table)
+        console.print("[dim]💡 Use [cyan]help <command>[/cyan] for detailed information[/dim]")
+        console.print("[dim]🎯 Keyboard shortcuts: Ctrl+A (analyze), Ctrl+D (dashboard), Ctrl+H (help), Ctrl+R (repo)[/dim]\n")
+
+class CommandHistory:
+    """Enhanced command history with search."""
+    
+    @staticmethod
+    def add_to_history(command: str):
+        """Add command to history with timestamp."""
+        entry = {
+            "command": command,
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "timestamp": datetime.now()
+        }
+        cli_state["command_history"].append(entry)
+        
+        # Keep only last 100 commands
+        if len(cli_state["command_history"]) > 100:
+            cli_state["command_history"] = cli_state["command_history"][-100:]
+    
+    @staticmethod
+    def search_history(query: str) -> List[Dict]:
+        """Search command history."""
+        if not query:
+            return cli_state["command_history"][-10:]
+        
+        results = []
+        for entry in cli_state["command_history"]:
+            if query.lower() in entry["command"].lower():
+                results.append(entry)
+        
+        return results[-10:]  # Return last 10 matches
+    
+    @staticmethod
+    def show_history(query: str = ""):
+        """Display command history with optional search."""
+        entries = CommandHistory.search_history(query)
+        
+        if not entries:
+            console.print("[dim]No commands in history[/dim]")
+            return
+        
+        history_table = Table(title=f"Command History{' - Search: ' + query if query else ''}", box=SIMPLE)
+        history_table.add_column("Time", style="dim", width=10)
+        history_table.add_column("Command", style="white")
+        
+        for entry in entries:
+            history_table.add_row(entry["time"], SyntaxHighlighter.highlight_command(entry["command"]))
+        
+        console.print(history_table)
+
+# Initialize enhanced prompt session after all classes are defined
+def initialize_prompt_session():
+    """Initialize the enhanced prompt session with modern features."""
+    global prompt_session, prompt_style
+    
+    # Get theme style
+    prompt_style = ThemeManager.get_style(cli_state.get("theme", "modern"))
+    
+    # Enhanced prompt session with modern features
+    prompt_session = PromptSession(
+        history=FileHistory(str(history_path)),
+        completer=main_completer,
+        style=prompt_style,
+        auto_suggest=AutoSuggestFromHistory(),
+        key_bindings=KeyboardShortcuts.create_key_bindings(),
+        mouse_support=True,
+        complete_style='multi-column'
+    )
+
+# Initialize the prompt session
+initialize_prompt_session()
 
 # --- NEW UTILITY FUNCTIONS for managing analyzed repos ---
 
@@ -998,6 +1472,227 @@ def get_prompt_text() -> List[Tuple[str, str]]:
         ('class:separator', ' > '),
     ]
 
+# --- Onboarding Session Manager ---
+class OnboardingSession:
+    def __init__(self, repo_id: str, repo_url: str):
+        self.repo_id = repo_id
+        self.repo_url = repo_url
+        self.api = LumiereAPIClient()
+        console.print(Panel(
+            f"[bold green]🎓 Onboarding Concierge[/bold green]\n"
+            f"[yellow]Repository:[/yellow] {self.repo_id}\n"
+            f"[yellow]URL:[/yellow] {self.repo_url}\n\n"
+            "[dim]Helping new developers get started. Type 'help' for commands.[/dim]",
+            border_style="green"
+        ))
+
+    def loop(self):
+        """Main interactive loop for onboarding assistance."""
+        global prompt_session
+        prompt_session = PromptSession(
+            history=FileHistory(str(history_path)),
+            completer=onboard_completer,
+            style=prompt_style
+        )
+
+        while True:
+            try:
+                onboard_prompt_text = [
+                    ('class:lumiere', 'Lumière'),
+                    ('class:provider', f' (Onboard/{self.repo_id})'),
+                    ('class:separator', ' > '),
+                ]
+
+                command = prompt_session.prompt(onboard_prompt_text).strip()
+
+                if not command:
+                    continue
+                if command.lower() in ("q", "quit", "exit", "back"):
+                    break
+                if command.lower() in ("h", "help"):
+                    display_interactive_help('onboard')
+                    continue
+
+                self.handle_onboard_command(command)
+
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Use 'exit' or 'back' to return to the main menu.[/yellow]")
+                continue
+            except EOFError:
+                break
+
+        console.print("[green]🎓 Onboarding session ended.[/green]")
+        # Restore main completer
+        prompt_session = PromptSession(
+            history=FileHistory(str(history_path)),
+            completer=main_completer,
+            style=prompt_style
+        )
+
+    def handle_onboard_command(self, command: str):
+        """Handle onboarding-specific commands."""
+        parts = command.split()
+        if not parts:
+            return
+
+        cmd = parts[0].lower()
+
+        if cmd in ("scout", "s"):
+            self.scout_good_first_issues()
+        elif cmd in ("expert", "e"):
+            if len(parts) < 2:
+                console.print("[red]Usage: expert <file_path>[/red]")
+                return
+            file_path = " ".join(parts[1:])
+            self.find_expert_for_file(file_path)
+        elif cmd in ("guide", "g"):
+            if len(parts) < 2:
+                console.print("[red]Usage: guide <issue_number>[/red]")
+                return
+            try:
+                issue_number = int(parts[1])
+                self.generate_onboarding_guide(issue_number)
+            except ValueError:
+                console.print("[red]Issue number must be a valid integer.[/red]")
+        else:
+            console.print(f"[red]Unknown command: {cmd}. Type 'help' for available commands.[/red]")
+
+    def scout_good_first_issues(self):
+        """Find and display issues suitable for newcomers."""
+        console.print("\n[bold cyan]🔍 Scouting for good first issues...[/bold cyan]")
+        
+        with Status("[bold green]Analyzing issues with onboarding suitability scoring...", console=console):
+            try:
+                # Call the strategist to get prioritized issues with onboarding scores
+                response = self.api._request("POST", "strategist/prioritize/", {
+                    "repo_url": self.repo_url
+                })
+                
+                if not response or 'prioritized_issues' not in response:
+                    console.print("[red]❌ Failed to fetch issues for analysis.[/red]")
+                    return
+                
+                issues = response['prioritized_issues']
+                # Filter for issues with high onboarding suitability
+                suitable_issues = [
+                    issue for issue in issues 
+                    if issue.get('onboarding_suitability_score', 0) > 70
+                ]
+                
+                if not suitable_issues:
+                    console.print("[yellow]No issues found with high onboarding suitability scores.[/yellow]")
+                    return
+                
+                # Display results in a nice table
+                table = Table(title="🌟 Good First Issues", border_style="green")
+                table.add_column("Issue #", style="bold cyan", width=8)
+                table.add_column("Title", style="white", width=40)
+                table.add_column("Onboarding Score", style="bold green", width=15)
+                table.add_column("Blast Radius", style="yellow", width=12)
+                
+                for issue in suitable_issues[:10]:  # Show top 10
+                    table.add_row(
+                        f"#{issue['number']}",
+                        issue['title'][:35] + "..." if len(issue['title']) > 35 else issue['title'],
+                        f"{issue.get('onboarding_suitability_score', 0):.1f}/100",
+                        str(issue.get('blast_radius', 'N/A'))
+                    )
+                
+                console.print(table)
+                
+                if len(suitable_issues) > 10:
+                    console.print(f"[dim]... and {len(suitable_issues) - 10} more suitable issues[/dim]")
+                
+                console.print(f"\n[green]✅ Found {len(suitable_issues)} issues suitable for newcomers![/green]")
+                
+            except Exception as e:
+                console.print(f"[red]❌ Error during issue analysis: {str(e)}[/red]")
+
+    def find_expert_for_file(self, file_path: str):
+        """Find experts for a specific file."""
+        console.print(f"\n[bold cyan]👨‍💻 Finding experts for: {file_path}[/bold cyan]")
+        
+        with Status("[bold green]Analyzing file expertise...", console=console):
+            try:
+                response = self.api._request("POST", "expertise/find/", {
+                    "repo_id": self.repo_id,
+                    "file_path": file_path,
+                    "type": "file"
+                })
+                
+                if not response or 'experts' not in response:
+                    console.print("[red]❌ Failed to find experts for this file.[/red]")
+                    return
+                
+                experts = response['experts']
+                
+                if not experts:
+                    console.print(f"[yellow]No experts found for {file_path}.[/yellow]")
+                    return
+                
+                # Display experts in a table
+                table = Table(title=f"🎯 Experts for {file_path}", border_style="blue")
+                table.add_column("Rank", style="bold cyan", width=6)
+                table.add_column("Expert", style="white", width=25)
+                table.add_column("Email", style="yellow", width=30)
+                table.add_column("Score", style="bold green", width=8)
+                table.add_column("Lines", style="magenta", width=8)
+                
+                for i, expert in enumerate(experts[:5], 1):  # Show top 5
+                    table.add_row(
+                        str(i),
+                        expert['author'],
+                        expert['email'],
+                        f"{expert['score']:.1f}",
+                        str(expert['details']['blame_lines'])
+                    )
+                
+                console.print(table)
+                console.print(f"\n[green]✅ Found {len(experts)} experts for this file![/green]")
+                console.print("[dim]💡 Tip: Reach out to the top expert for guidance on this file.[/dim]")
+                
+            except Exception as e:
+                console.print(f"[red]❌ Error finding experts: {str(e)}[/red]")
+
+    def generate_onboarding_guide(self, issue_number: int):
+        """Generate a personalized onboarding guide for an issue."""
+        console.print(f"\n[bold cyan]📚 Generating onboarding guide for issue #{issue_number}[/bold cyan]")
+        
+        with Status("[bold green]Creating personalized learning path...", console=console):
+            try:
+                response = self.api._request("POST", "onboarding/guide/", {
+                    "repo_id": self.repo_id,
+                    "issue_number": issue_number
+                })
+                
+                if not response or not response.get('onboarding_guide'):
+                    console.print("[red]❌ Failed to generate onboarding guide.[/red]")
+                    if response and response.get('error'):
+                        console.print(f"[red]Error: {response['error']}[/red]")
+                    return
+                
+                # Display the guide
+                guide_content = response['onboarding_guide']
+                
+                # Show summary first
+                console.print(Panel(
+                    f"[bold green]📖 Onboarding Guide Generated![/bold green]\n"
+                    f"[yellow]Issue:[/yellow] #{issue_number} - {response.get('issue_title', 'Unknown')}\n"
+                    f"[yellow]Learning Steps:[/yellow] {response.get('learning_path_steps', 0)}\n"
+                    f"[yellow]Core Files:[/yellow] {len(response.get('locus_files', []))}\n",
+                    border_style="green"
+                ))
+                
+                # Display the full guide using Rich Markdown
+                console.print(Markdown(guide_content))
+                
+                console.print(f"\n[green]✅ Your personalized onboarding guide is ready![/green]")
+                console.print("[dim]💡 Follow the steps above to understand this issue. Good luck! 🍀[/dim]")
+                
+            except Exception as e:
+                console.print(f"[red]❌ Error generating guide: {str(e)}[/red]")
+
+
 # --- Enhanced Analysis Session Manager ---
 class AnalysisSession:
     def __init__(self, repo_url: str):
@@ -1243,6 +1938,11 @@ class AnalysisSession:
             console.print("\n[dim]💡 Type [bold]list[/bold] to see issues, or [bold]help[/bold] for commands.[/dim]")
             return
 
+        if command in ('m', 'mage'):
+            self.execute_action(command, {}) # Pass empty dict, issue not needed
+            console.print("\n[dim]💡 Type [bold]list[/bold] to see issues, or [bold]help[/bold] for commands.[/dim]")
+            return
+
         if command in ('f', 'fix') and self.last_rca_report:
              issue = next((iss for iss in self.issues if iss.get('number') == self.last_rca_issue_num), None)
              if issue:
@@ -1250,7 +1950,7 @@ class AnalysisSession:
                  console.print("\n[dim]💡 Type [bold]list[/bold] to see issues, or [bold]help[/bold] for commands.[/dim]")
                  return
 
-        if command not in ('f', 'fix', 'b', 'briefing', 'r', 'rca', 'd', 'details'):
+        if command not in ('f', 'fix', 'b', 'briefing', 'r', 'rca', 'd', 'details', 'm', 'mage'):
             console.print("[red]❌ Unknown command. Type 'help' for available commands.[/red]")
             return
 
@@ -1314,6 +2014,10 @@ class AnalysisSession:
                 console.print(Panel(graph_data["message"], title="[yellow]Graph Not Available[/yellow]", border_style="yellow"))
             else:
                  console.print("[red]❌ Could not retrieve architectural graph.[/red]")
+            return
+
+        if command in ('m', 'mage'):
+            self.handle_mage_session()
             return
 
         with Progress(
@@ -1648,6 +2352,159 @@ class AnalysisSession:
         self.last_rca_report = None
         self.last_rca_issue_num = None
 
+    def handle_mage_session(self):
+        """Handle The Mage interactive session for code transformation."""
+        # Import mage service
+        sys.path.append('backend')
+        from backend.lumiere_core.services import mage_service
+        
+        console.print(Panel(
+            f"[bold magenta]🔮 The Mage's Sanctum[/bold magenta]\n"
+            f"[yellow]Repository:[/yellow] {self.repo_id}\n"
+            f"[yellow]URL:[/yellow] {self.repo_url}\n\n"
+            "[dim]Master of code transmutation. Cast spells to transform your code.[/dim]",
+            border_style="magenta"
+        ))
+        
+        # Show available spells
+        spells = mage_service.list_available_spells()
+        console.print("\n[bold magenta]📜 Available Spells:[/bold magenta]")
+        
+        spells_table = Table(show_header=True, header_style="bold cyan", border_style="magenta")
+        spells_table.add_column("Spell", style="cyan")
+        spells_table.add_column("Description", style="white")
+        
+        for spell_name, description in spells.items():
+            spells_table.add_row(spell_name, description)
+        
+        console.print(spells_table)
+        
+        # Interactive spell casting loop
+        mage_completer = WordCompleter(list(spells.keys()) + ['help', 'h', 'list', 'l', 'back', 'exit', 'quit'], ignore_case=True)
+        mage_session = PromptSession(
+            history=FileHistory(str(history_path)),
+            completer=mage_completer,
+            style=prompt_style
+        )
+        
+        console.print("\n[dim]💡 Usage: cast <spell_name> <file_path> <target_identifier> [options][/dim]")
+        console.print("[dim]Example: cast translate_contract src/models.py UserProfile --target=typescript[/dim]")
+        
+        while True:
+            try:
+                mage_prompt_text = [
+                    ('class:lumiere', 'Lumière'),
+                    ('class:provider', f' (Mage/{self.repo_id})'),
+                    ('class:separator', ' > '),
+                ]
+                
+                command = mage_session.prompt(mage_prompt_text).strip()
+                
+                if not command:
+                    continue
+                if command.lower() in ("q", "quit", "exit", "back"):
+                    break
+                if command.lower() in ("h", "help"):
+                    console.print(spells_table)
+                    continue
+                if command.lower() in ("l", "list"):
+                    console.print(spells_table)
+                    continue
+                
+                # Parse cast command
+                if command.startswith("cast "):
+                    self._handle_cast_command(command[5:].strip())
+                else:
+                    console.print("[yellow]💡 Start your command with 'cast' followed by spell name, file path, and target.[/yellow]")
+                    console.print("[dim]Type 'help' to see available spells, or 'back' to return.[/dim]")
+                    
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Use 'back' or 'exit' to return to analysis session.[/yellow]")
+                continue
+            except EOFError:
+                break
+        
+        console.print("[magenta]🔮 The Mage session ended.[/magenta]")
+    
+    def _handle_cast_command(self, command_args: str):
+        """Handle casting a specific spell."""
+        try:
+            # Import mage service
+            from backend.lumiere_core.services import mage_service
+            
+            # Parse arguments
+            parts = shlex.split(command_args)
+            if len(parts) < 3:
+                console.print("[red]❌ Usage: cast <spell_name> <file_path> <target_identifier> [--option=value][/red]")
+                return
+            
+            spell_name = parts[0]
+            file_path = parts[1]
+            target_identifier = parts[2]
+            
+            # Parse additional options
+            kwargs = {}
+            for part in parts[3:]:
+                if part.startswith("--"):
+                    if "=" in part:
+                        key, value = part[2:].split("=", 1)
+                        kwargs[key] = value
+                    else:
+                        kwargs[part[2:]] = True
+            
+            console.print(f"\n[magenta]🔮 Casting {spell_name} on {target_identifier} in {file_path}...[/magenta]")
+            
+            # Cast the spell
+            with Status("[magenta]✨ The Mage is weaving magic...[/magenta]"):
+                result = mage_service.cast_transformation_spell(
+                    self.repo_id, spell_name, file_path, target_identifier, **kwargs
+                )
+            
+            if "error" in result:
+                console.print(f"[red]❌ Spell failed: {result['error']}[/red]")
+                return
+            
+            # Display the transformation
+            console.print(Panel(
+                f"[bold green]✨ Spell Cast Successfully![/bold green]\n"
+                f"[yellow]Spell:[/yellow] {result['spell_name']}\n"
+                f"[yellow]Target:[/yellow] {result['target_identifier']}\n"
+                f"[yellow]File:[/yellow] {result['file_path']}\n"
+                f"[yellow]Type:[/yellow] {result.get('transformation_type', 'unknown')}\n"
+                f"[yellow]Description:[/yellow] {result.get('description', 'No description')}",
+                title="[green]🔮 Magic Complete[/green]",
+                border_style="green"
+            ))
+            
+            # Show before and after
+            console.print("\n[bold]📜 Original Code:[/bold]")
+            console.print(Panel(result['original_code'], border_style="red", title="[red]Before[/red]"))
+            
+            console.print("\n[bold]✨ Transformed Code:[/bold]")
+            console.print(Panel(result['transformed_code'], border_style="green", title="[green]After[/green]"))
+            
+            # Ask if user wants to apply the transformation
+            try:
+                if Confirm.ask("\n[bold]Apply this transformation to the file?[/bold]", default=False):
+                    with Status("[magenta]📝 Applying transformation...[/magenta]"):
+                        apply_result = mage_service.apply_code_transformation(self.repo_id, result)
+                    
+                    if apply_result.get("success"):
+                        console.print(Panel(
+                            f"[bold green]✅ Transformation Applied![/bold green]\n"
+                            f"{apply_result.get('message', 'Code has been updated successfully.')}",
+                            border_style="green"
+                        ))
+                    else:
+                        console.print(f"[red]❌ Failed to apply transformation: {apply_result.get('error', 'Unknown error')}[/red]")
+                else:
+                    console.print("[yellow]Transformation not applied. The spell result is shown above for your reference.[/yellow]")
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Transformation not applied.[/yellow]")
+                
+        except Exception as e:
+            console.print(f"[red]❌ Error casting spell: {str(e)}[/red]")
+
 
 # --- Utility Function for Help Display ---
 def display_interactive_help(context: str = 'main'):
@@ -1660,11 +2517,17 @@ def display_interactive_help(context: str = 'main'):
     if context == 'main':
         help_table.add_row("analyze / a", "Ingest or re-ingest a repo for analysis")
         help_table.add_row("ask / oracle", "Ask architectural questions about a repo")
+        help_table.add_row("dance / da", "🕺 The Masked Dancer - visualize execution flow")
+        help_table.add_row("summon / su", "🧙 The Summoner - generate code patterns")
         help_table.add_row("review", "Perform an AI-powered review of a Pull Request")
         help_table.add_row("dashboard / d", "View the project health dashboard")
         help_table.add_row("profile / p", "Get GitHub user profile analysis")
         help_table.add_row("bom / b", "Bill of Materials analysis for a repository")
+        help_table.add_row("onboard / o", "Onboarding Concierge - help new developers")
         help_table.add_row("repo-mgmt / rm", "Repository management (list, delete, status)")
+        help_table.add_row("quartermaster / qm", "⚖️ Supply-chain management & vulnerability scanning")
+        help_table.add_row("loremaster / lm", "📚 API documentation & client code generation")
+        help_table.add_row("librarian / lib", "📚 Local directory archives & knowledge management")
 
         # --- DYNAMIC HELP TEXT ---
         if cli_state.get("model"):
@@ -1680,6 +2543,13 @@ def display_interactive_help(context: str = 'main'):
         help_table.add_row("details / d", "Show issue metadata")
         help_table.add_row("rca / r", "Root cause analysis")
         help_table.add_row("fix / f", "Launch fix dialogue")
+        help_table.add_row("mage / m", "🔮 The Mage - intelligent code transformation")
+        help_table.add_row("help / h", "Show this help menu")
+        help_table.add_row("back / exit / quit", "Return to main menu")
+    elif context == 'onboard':
+        help_table.add_row("scout / s", "Find 'good first issues' with onboarding scores")
+        help_table.add_row("expert <file_path>", "Find experts for a specific file")
+        help_table.add_row("guide <issue_number>", "Generate personalized onboarding guide")
         help_table.add_row("help / h", "Show this help menu")
         help_table.add_row("back / exit / quit", "Return to main menu")
 
@@ -1690,21 +2560,49 @@ app = typer.Typer()
 
 @app.command()
 def run():
-    """Launch Lumière interactive shell."""
+    """Launch Lumière interactive shell with modern features."""
+    # Display startup animation
+    AnimationManager.typing_effect("🚀 Initializing Lumière Sémantique...", 0.02)
+    
     api_client = LumiereAPIClient()
 
-    health_status = api_client._request("GET", "health/")
-    if health_status is None:
-        console.print("[bold red]Lumière CLI cannot start without a backend connection.[/bold red]")
-        sys.exit(1)
+    # Enhanced health check with progress
+    with ProgressBarManager.create_modern_progress() as progress:
+        task = progress.add_task("[cyan]Connecting to backend...", total=3)
+        progress.update(task, completed=1)
+        
+        health_status = api_client._request("GET", "health/")
+        progress.update(task, completed=2)
+        
+        if health_status is None:
+            progress.update(task, description="[red]✗ Connection failed", completed=3)
+            console.print("[bold red]Lumière CLI cannot start without a backend connection.[/bold red]")
+            sys.exit(1)
+        
+        progress.update(task, description="[green]✓ Backend connected", completed=3)
 
     load_config()
+    
+    # Modern welcome screen with theme
+    theme = cli_state.get("theme", "modern")
+    welcome_content = f"""[bold]✨ Welcome to Lumière Sémantique ✨[/bold]
 
-    welcome_text = (f"[bold cyan]✨ Welcome to Lumière Sémantique ✨[/bold cyan]\n"
-                    f"The Conversational Mission Controller is active.\n\n"
-                    f"[dim]Backend Status: [green]Online[/green] at [underline]{API_BASE_URL}[/underline][/dim]")
-    console.print(Panel(welcome_text, border_style="cyan"))
-    display_interactive_help('main')
+[cyan]🎯 Modern Code Intelligence Platform[/cyan]
+[dim]The Conversational Mission Controller is active[/dim]
+
+[green]Backend:[/green] Online at {API_BASE_URL}
+[green]Theme:[/green] {theme.title()}
+[green]Features:[/green] Fuzzy search, Smart completion, Live preview
+
+[yellow]💡 Quick Start:[/yellow]
+• Type [cyan]dashboard[/cyan] or press [yellow]Ctrl+D[/yellow] for overview
+• Use [cyan]analyze <repo>[/cyan] for deep analysis  
+• Press [yellow]Ctrl+H[/yellow] for help anytime"""
+
+    AnimationManager.fade_in_panel(welcome_content, "🌟 Lumière Sémantique", 0.08)
+    
+    # Show enhanced help
+    EnhancedHelp.show_general_help()
 
     next_command = None
     context = {}
@@ -1713,18 +2611,44 @@ def run():
         try:
             if next_command is None:
                 prompt_text = get_prompt_text()
-                command = prompt_session.prompt(prompt_text).strip()
+                
+                # Show command preview as user types
+                def get_preview(text):
+                    if text.strip():
+                        preview = CommandPreview.preview_command(text.strip())
+                        return f"[dim]{preview}[/dim]"
+                    return ""
+                
+                # Enhanced prompt with live preview
+                try:
+                    command = prompt_session.prompt(prompt_text).strip()
+                except KeyboardInterrupt:
+                    result = prompt_session.app.result
+                    if result == 'dashboard':
+                        command = 'dashboard'
+                    elif result == 'help':
+                        command = 'help'
+                    elif result == 'analyze':
+                        command = 'analyze'
+                    elif result == 'repo-mgmt':
+                        command = 'repo-mgmt'
+                    else:
+                        continue
             else:
                 command = next_command
-                console.print(f"\n[dim]Executing suggested action: [bold]{command}[/bold]...[/dim]")
+                console.print(f"\n[dim]Executing suggested action: [bold]{SyntaxHighlighter.highlight_command(command)}[/bold]...[/dim]")
 
             next_command = None
 
             if not command:
                 continue
+            
+            # Add to command history
+            CommandHistory.add_to_history(command)
 
             if command.lower() in ("exit", "quit", "x"):
-                console.print("[dim]👋 Goodbye![/dim]")
+                NotificationManager.add_notification("Thanks for using Lumière! 👋", "info")
+                AnimationManager.typing_effect("Goodbye! 👋", 0.05)
                 break
 
             elif command.lower() == "back":
@@ -1732,7 +2656,50 @@ def run():
                 continue
 
             elif command.lower() in ("help", "h"):
-                display_interactive_help('main')
+                # Enhanced help with contextual information
+                parts = command.split()
+                if len(parts) > 1:
+                    EnhancedHelp.show_contextual_help(parts[1])
+                else:
+                    EnhancedHelp.show_general_help()
+                continue
+            
+            elif command.lower() in ("history", "hist"):
+                # New command history feature
+                parts = command.split()
+                search_query = " ".join(parts[1:]) if len(parts) > 1 else ""
+                CommandHistory.show_history(search_query)
+                continue
+            
+            elif command.lower() in ("theme"):
+                # New theme switching feature
+                parts = command.split()
+                if len(parts) > 1:
+                    new_theme = parts[1].lower()
+                    if new_theme in ThemeManager.THEMES:
+                        cli_state["theme"] = new_theme
+                        # Update theme dynamically
+                        new_style = ThemeManager.get_style(new_theme)
+                        prompt_session.style = new_style
+                        NotificationManager.add_notification(f"Theme changed to {new_theme}", "success")
+                    else:
+                        available_themes = ", ".join(ThemeManager.THEMES.keys())
+                        console.print(f"[red]Unknown theme. Available: {available_themes}[/red]")
+                else:
+                    console.print(f"[yellow]Current theme: {cli_state.get('theme', 'modern')}[/yellow]")
+                    console.print(f"[dim]Available themes: {', '.join(ThemeManager.THEMES.keys())}[/dim]")
+                continue
+            
+            elif command.lower() in ("dashboard", "d"):
+                # Enhanced dashboard
+                ModernDashboard.show_dashboard()
+                continue
+            
+            elif command.lower() in ("animate"):
+                # Toggle animations
+                cli_state["animations_enabled"] = not cli_state.get("animations_enabled", True)
+                status = "enabled" if cli_state["animations_enabled"] else "disabled"
+                NotificationManager.add_notification(f"Animations {status}", "info")
                 continue
 
             elif command.lower() in ("config", "c"):
@@ -1782,6 +2749,276 @@ def run():
                 oracle_session = OracleSession(repo_url)
                 oracle_session.loop()
                 context = {}
+                continue
+
+            elif command.lower() in ("dance", "da"):
+                if not cli_state.get("model"):
+                    console.print("[bold red]Please select a model first using the 'config' command.[/bold red]")
+                    continue
+                
+                # Import dance service
+                sys.path.append('backend')
+                from backend.lumiere_core.services import dance_service
+                
+                # Get repository to analyze
+                repo_url = context.get("repo_url")
+                if not repo_url:
+                    analyzed_repos = find_analyzed_repos()
+                    if not analyzed_repos:
+                        console.print("[yellow]No analyzed repositories found. Use 'analyze' to ingest a repo first.[/yellow]")
+                        continue
+                    console.print(Panel("Select a repository to dance with.", title="[magenta]💃 The Masked Dancer[/magenta]", border_style="magenta"))
+                    table = Table(show_header=False, box=None, padding=(0, 2))
+                    for i, repo in enumerate(analyzed_repos, 1): 
+                        table.add_row(f"([bold cyan]{i}[/bold cyan])", repo['display_name'])
+                    console.print(table)
+                    try:
+                        choice = Prompt.ask("Enter choice", choices=[str(i) for i in range(1, len(analyzed_repos) + 1)], show_choices=False, default='1')
+                        repo_url = analyzed_repos[int(choice) - 1]['url']
+                    except (ValueError, IndexError, KeyboardInterrupt): 
+                        continue
+                
+                repo_id = repo_url.replace("https://github.com/", "").replace("/", "_")
+                
+                # Get user query for what to trace
+                console.print("\n[bold magenta]💃 The Masked Dancer[/bold magenta] reveals the secret choreography of your application.")
+                console.print("[dim]Describe what execution flow you'd like to trace (e.g., 'user login API call', 'data processing pipeline').[/dim]")
+                
+                try:
+                    query = Prompt.ask("\n[bold]What dance would you like to see?[/bold]").strip()
+                    if not query:
+                        console.print("[yellow]No query provided. Dance cancelled.[/yellow]")
+                        continue
+                except KeyboardInterrupt:
+                    continue
+                
+                # Ask for output format
+                try:
+                    format_choice = Prompt.ask(
+                        "\n[bold]Choose visualization format[/bold]",
+                        choices=["cli", "svg"],
+                        default="cli"
+                    )
+                except KeyboardInterrupt:
+                    continue
+                
+                with Status("[magenta]🔍 The Oracle is finding the best starting point...[/magenta]"):
+                    entry_point_result = dance_service.find_entry_point(repo_id, query)
+                
+                if "error" in entry_point_result:
+                    console.print(f"[red]❌ Could not find starting point: {entry_point_result['error']}[/red]")
+                    continue
+                
+                suggested_node = entry_point_result.get("suggested_node")
+                confidence = entry_point_result.get("confidence", 0)
+                
+                console.print(Panel(
+                    f"[bold green]🎯 Starting Point Found[/bold green]\n"
+                    f"[yellow]Function/Method:[/yellow] {suggested_node}\n"
+                    f"[yellow]File:[/yellow] {entry_point_result.get('file_path', 'Unknown')}\n"
+                    f"[yellow]Confidence:[/yellow] {confidence:.2f}\n\n"
+                    f"[dim]Context: {entry_point_result.get('context', '')[:100]}...[/dim]",
+                    border_style="green"
+                ))
+                
+                try:
+                    if not Confirm.ask(f"[bold]Begin dance with '{suggested_node}'?[/bold]", default=True):
+                        # Show alternatives
+                        alternatives = entry_point_result.get("alternatives", [])
+                        if alternatives:
+                            console.print("\n[bold]Alternative starting points:[/bold]")
+                            for i, alt in enumerate(alternatives[:5], 1):
+                                console.print(f"  {i}. {alt['node_id']} (confidence: {alt['confidence']:.2f})")
+                            
+                            try:
+                                alt_choice = Prompt.ask("Choose alternative (1-5) or press Enter to cancel", default="")
+                                if alt_choice and alt_choice.isdigit() and 1 <= int(alt_choice) <= len(alternatives):
+                                    suggested_node = alternatives[int(alt_choice) - 1]['node_id']
+                                else:
+                                    console.print("[yellow]Dance cancelled.[/yellow]")
+                                    continue
+                            except KeyboardInterrupt:
+                                continue
+                        else:
+                            console.print("[yellow]Dance cancelled.[/yellow]")
+                            continue
+                except KeyboardInterrupt:
+                    continue
+                
+                # Perform the dance!
+                with Status("[magenta]💃 The Masked Dancer is tracing the execution flow...[/magenta]"):
+                    if format_choice == "svg":
+                        output_file = f"dance_of_{suggested_node.replace('.', '_')}.svg"
+                        dance_result = dance_service.visualize_dance(repo_id, suggested_node, "svg", output_file)
+                        console.print(Panel(
+                            f"[bold green]✨ Dance visualization complete![/bold green]\n"
+                            f"[yellow]SVG file saved:[/yellow] {output_file}\n\n"
+                            "[dim]Open the SVG file in a browser to see the animated execution flow![/dim]",
+                            title="[green]🎭 Dance Complete[/green]",
+                            border_style="green"
+                        ))
+                    else:
+                        dance_result = dance_service.visualize_dance(repo_id, suggested_node, "cli")
+                        console.print("\n" + dance_result)
+                
+                context = {"repo_url": repo_url, "repo_id": repo_id}
+                continue
+
+            elif command.lower() in ("summon", "su"):
+                if not cli_state.get("model"):
+                    console.print("[bold red]Please select a model first using the 'config' command.[/bold red]")
+                    continue
+                
+                # Import summoner service
+                sys.path.append('backend')
+                from backend.lumiere_core.services import summoner_service
+                
+                # Get repository to analyze
+                repo_url = context.get("repo_url")
+                if not repo_url:
+                    analyzed_repos = find_analyzed_repos()
+                    if not analyzed_repos:
+                        console.print("[yellow]No analyzed repositories found. Use 'analyze' to ingest a repo first.[/yellow]")
+                        continue
+                    console.print(Panel("Select a repository to summon patterns for.", title="[cyan]🧙 The Summoner[/cyan]", border_style="cyan"))
+                    table = Table(show_header=False, box=None, padding=(0, 2))
+                    for i, repo in enumerate(analyzed_repos, 1): 
+                        table.add_row(f"([bold cyan]{i}[/bold cyan])", repo['display_name'])
+                    console.print(table)
+                    try:
+                        choice = Prompt.ask("Enter choice", choices=[str(i) for i in range(1, len(analyzed_repos) + 1)], show_choices=False, default='1')
+                        repo_url = analyzed_repos[int(choice) - 1]['url']
+                    except (ValueError, IndexError, KeyboardInterrupt): 
+                        continue
+                
+                repo_id = repo_url.replace("https://github.com/", "").replace("/", "_")
+                
+                console.print("\n[bold cyan]🧙 The Summoner[/bold cyan] materializes code patterns from the architectural DNA.")
+                
+                # Show available recipes
+                recipes = summoner_service.list_summoning_recipes()
+                console.print("\n[bold cyan]📜 Available Summoning Recipes:[/bold cyan]")
+                
+                recipes_table = Table(show_header=True, header_style="bold cyan", border_style="cyan")
+                recipes_table.add_column("Recipe", style="cyan")
+                recipes_table.add_column("Description", style="white")
+                
+                for recipe_name, recipe_info in recipes.items():
+                    recipes_table.add_row(recipe_name, recipe_info["description"])
+                
+                console.print(recipes_table)
+                
+                # Get recipe choice
+                try:
+                    recipe_choice = Prompt.ask(
+                        "\n[bold]Choose a recipe to summon[/bold]",
+                        choices=list(recipes.keys()),
+                        show_choices=False
+                    )
+                except KeyboardInterrupt:
+                    continue
+                
+                recipe_info = recipes[recipe_choice]
+                
+                # Get parameters for the recipe
+                console.print(f"\n[bold]Recipe: {recipe_info['name']}[/bold]")
+                console.print(f"[dim]{recipe_info['description']}[/dim]")
+                
+                parameters = {}
+                for param in recipe_info.get("parameters", []):
+                    try:
+                        if param == "path":
+                            value = Prompt.ask(f"Enter API path (e.g., /users)", default="/items")
+                        elif param == "methods":
+                            value = Prompt.ask(f"Enter HTTP methods (comma-separated)", default="get,post")
+                        elif param == "model_name":
+                            value = Prompt.ask(f"Enter model/entity name", default="Item")
+                        elif param == "component_name":
+                            value = Prompt.ask(f"Enter component name", default="MyComponent")
+                        else:
+                            value = Prompt.ask(f"Enter {param}")
+                        parameters[param] = value
+                    except KeyboardInterrupt:
+                        console.print("\n[yellow]Summoning cancelled.[/yellow]")
+                        break
+                else:
+                    # All parameters collected, perform summoning
+                    with Status("[cyan]🔍 Resonating with the architecture...[/cyan]"):
+                        summoning_result = summoner_service.summon_code_pattern(repo_id, recipe_choice, **parameters)
+                    
+                    if "error" in summoning_result:
+                        console.print(f"[red]❌ Summoning failed: {summoning_result['error']}[/red]")
+                        continue
+                    
+                    # Display the summoning plan
+                    console.print(Panel(
+                        f"[bold green]🧙 Summoning Plan Ready[/bold green]\n"
+                        f"[yellow]Recipe:[/yellow] {summoning_result['recipe_name']}\n"
+                        f"[yellow]Description:[/yellow] {summoning_result['recipe_description']}\n\n"
+                        f"[bold]📜 The Blueprint:[/bold]",
+                        border_style="green"
+                    ))
+                    
+                    # Show surgical plan
+                    surgical_plan = summoning_result.get("surgical_plan", {})
+                    operations = surgical_plan.get("operations", [])
+                    
+                    plan_table = Table(show_header=True, header_style="bold yellow", border_style="yellow")
+                    plan_table.add_column("Operation", style="cyan")
+                    plan_table.add_column("File", style="white")
+                    plan_table.add_column("Description", style="dim white")
+                    
+                    for op in operations:
+                        op_type = op["type"]
+                        if op_type == "CREATE_FILE":
+                            op_display = "CREATE"
+                        elif op_type == "MODIFY_FILE":
+                            op_display = "MODIFY"
+                        else:
+                            op_display = "INSERT"
+                        
+                        plan_table.add_row(
+                            op_display,
+                            op["file_path"],
+                            op.get("description", "")
+                        )
+                    
+                    console.print(plan_table)
+                    
+                    console.print(f"\n[bold]Summary:[/bold] {surgical_plan.get('summary', 'Unknown')}")
+                    console.print(f"[yellow]Files to create:[/yellow] {surgical_plan.get('files_created', 0)}")
+                    console.print(f"[yellow]Files to modify:[/yellow] {surgical_plan.get('files_modified', 0)}")
+                    
+                    # Ask for confirmation
+                    try:
+                        if Confirm.ask("\n[bold]Proceed with the summoning?[/bold]", default=False):
+                            with Status("[cyan]🧙 The Summoner is weaving the ritual...[/cyan]"):
+                                execution_result = summoner_service.execute_summoning_ritual(repo_id, summoning_result)
+                            
+                            if execution_result.get("success"):
+                                console.print(Panel(
+                                    f"[bold green]✨ Summoning Complete![/bold green]\n"
+                                    f"[yellow]Operations completed:[/yellow] {execution_result.get('operations_completed', 0)}/{execution_result.get('total_operations', 0)}\n"
+                                    f"[yellow]Files created:[/yellow] {len(execution_result.get('created_files', []))}\n"
+                                    f"[yellow]Files modified:[/yellow] {len(execution_result.get('modified_files', []))}\n\n"
+                                    f"[bold]Created files:[/bold]\n" + "\n".join(f"  • {f}" for f in execution_result.get('created_files', [])) + "\n\n" +
+                                    f"[bold]Modified files:[/bold]\n" + "\n".join(f"  • {f}" for f in execution_result.get('modified_files', [])),
+                                    title="[green]🧙 Summoning Successful[/green]",
+                                    border_style="green"
+                                ))
+                            else:
+                                console.print(Panel(
+                                    f"[bold red]❌ Summoning Failed[/bold red]\n"
+                                    f"Operations completed: {execution_result.get('operations_completed', 0)}/{execution_result.get('total_operations', 0)}\n"
+                                    f"Some operations may have succeeded. Check the file system for partial results.",
+                                    border_style="red"
+                                ))
+                        else:
+                            console.print("[yellow]Summoning cancelled. The plan remains available for future use.[/yellow]")
+                    except KeyboardInterrupt:
+                        console.print("\n[yellow]Summoning cancelled.[/yellow]")
+                
+                context = {"repo_url": repo_url, "repo_id": repo_id}
                 continue
 
             elif command.lower() in ("review",):
@@ -1956,6 +3193,528 @@ def run():
                     context = {}
                 except (ValueError, IndexError, KeyboardInterrupt): 
                     continue
+
+            elif command.lower() in ("onboard", "o"):
+                if not cli_state.get("model"):
+                    console.print("[bold red]Please select a model first using the 'config' command.[/bold red]")
+                    continue
+
+                analyzed_repos = find_analyzed_repos()
+                if not analyzed_repos:
+                    console.print("[yellow]No analyzed repositories found. Use 'analyze' to ingest a repo first.[/yellow]")
+                    continue
+                
+                console.print(Panel("Select a repository for onboarding assistance.", title="[green]🎓 Onboarding Concierge[/green]", border_style="green"))
+                table = Table(show_header=False, box=None, padding=(0, 2))
+                for i, repo in enumerate(analyzed_repos, 1): 
+                    table.add_row(f"([bold cyan]{i}[/bold cyan])", repo['display_name'])
+                console.print(table)
+                
+                try:
+                    choice = Prompt.ask("Enter choice", choices=[str(i) for i in range(1, len(analyzed_repos) + 1)], show_choices=False, default='1')
+                    selected_repo = analyzed_repos[int(choice) - 1]
+                    
+                    onboard_session = OnboardingSession(selected_repo['repo_id'], selected_repo['url'])
+                    onboard_session.loop()
+                    context = {}
+                except (ValueError, IndexError, KeyboardInterrupt): 
+                    continue
+
+            elif command.lower() in ("librarian", "lib"):
+                if not cli_state.get("model"):
+                    console.print("[bold red]Please select a model first using the 'config' command.[/bold red]")
+                    continue
+
+                # Show Librarian menu
+                console.print("\n[bold purple]📚 The Librarian's Archives[/bold purple] - Universal Knowledge Management")
+                console.print("[dim]Managing both remote repositories and local directories as knowledge archives.[/dim]\n")
+                
+                try:
+                    # Get archives list
+                    with Status("[purple]Loading archive collection...[/purple]"):
+                        archives_response = api_client._request("GET", "librarian/archives/")
+                    
+                    if archives_response and "archives" in archives_response:
+                        archives = archives_response["archives"]
+                        
+                        # Display archives
+                        if archives:
+                            archives_table = Table(title="📚 Knowledge Archives", show_header=True, header_style="bold purple")
+                            archives_table.add_column("Archive ID", style="cyan")
+                            archives_table.add_column("Type", style="yellow")
+                            archives_table.add_column("Source", style="white")
+                            archives_table.add_column("Files", style="dim white")
+                            
+                            for archive in archives[:10]:  # Show top 10
+                                archives_table.add_row(
+                                    archive.get("archive_id", "unknown"),
+                                    archive.get("source_type", "unknown"),
+                                    archive.get("source_path", "unknown")[:40] + "...",
+                                    str(archive.get("file_count", 0))
+                                )
+                            console.print(archives_table)
+                        else:
+                            console.print("[yellow]📚 No archives found. Use 'ingest' to add local directories.[/yellow]")
+                        
+                        # Show available actions
+                        actions_panel = Panel(
+                            "[bold]Available Actions:[/bold]\n"
+                            "[yellow]ingest[/yellow] - Ingest a local directory as an archive\n"
+                            "[yellow]list[/yellow] - List all available archives\n"
+                            "[yellow]details[/yellow] - View archive details\n"
+                            "[yellow]ask[/yellow] - Ask questions about archives\n"
+                            "[dim]Type action name or 'back' to exit[/dim]",
+                            title="📚 Librarian Commands",
+                            border_style="purple"
+                        )
+                        console.print(actions_panel)
+                        
+                        # Action selection loop
+                        while True:
+                            try:
+                                action = Prompt.ask("\n[bold purple]Librarian Action[/bold purple]").strip().lower()
+                                
+                                if action in ("back", "exit", "quit"):
+                                    break
+                                elif action == "ingest":
+                                    directory_path = Prompt.ask("Local directory path to ingest")
+                                    if not directory_path.strip():
+                                        console.print("[yellow]No directory path provided.[/yellow]")
+                                        continue
+                                    
+                                    # Expand user path
+                                    directory_path = os.path.expanduser(directory_path.strip())
+                                    
+                                    if not os.path.exists(directory_path):
+                                        console.print(f"[red]Directory does not exist: {directory_path}[/red]")
+                                        continue
+                                    
+                                    with Status(f"[purple]Ingesting directory: {directory_path}...[/purple]"):
+                                        ingest_response = api_client._request("POST", "librarian/ingest/", 
+                                                                            json={"directory_path": directory_path})
+                                    
+                                    if ingest_response and "archive_id" in ingest_response:
+                                        result = ingest_response
+                                        ingest_panel = Panel(
+                                            f"[bold]Directory Successfully Archived[/bold]\n"
+                                            f"[yellow]Archive ID:[/yellow] {result.get('archive_id', 'Unknown')}\n"
+                                            f"[yellow]Source Path:[/yellow] {result.get('source_path', 'Unknown')}\n"
+                                            f"[yellow]Files Processed:[/yellow] {result.get('files_processed', 0)}\n"
+                                            f"[yellow]Processing Time:[/yellow] {result.get('processing_time_seconds', 0):.2f}s\n"
+                                            f"[yellow]Status:[/yellow] ✅ {result.get('status', 'Unknown')}",
+                                            title="📚 Archive Created",
+                                            border_style="green"
+                                        )
+                                        console.print(ingest_panel)
+                                    else:
+                                        error_msg = ingest_response.get("error", "Unknown error") if ingest_response else "No response"
+                                        console.print(f"[red]❌ Ingestion failed: {error_msg}[/red]")
+                                
+                                elif action == "list":
+                                    with Status("[purple]Refreshing archive list...[/purple]"):
+                                        archives_response = api_client._request("GET", "librarian/archives/")
+                                    if archives_response and "archives" in archives_response:
+                                        archives = archives_response["archives"]
+                                        console.print(f"[green]✅ Found {len(archives)} archives.[/green]")
+                                        
+                                elif action == "details":
+                                    if not archives:
+                                        console.print("[yellow]No archives available.[/yellow]")
+                                        continue
+                                    
+                                    # Show archive choices
+                                    console.print("\n[bold]Select an archive for details:[/bold]")
+                                    for i, archive in enumerate(archives[:10], 1):
+                                        console.print(f"[cyan]{i}[/cyan]. {archive.get('archive_id', 'unknown')}")
+                                    
+                                    try:
+                                        choice = int(Prompt.ask("Archive number")) - 1
+                                        if 0 <= choice < len(archives):
+                                            archive_id = archives[choice]["archive_id"]
+                                            with Status(f"[purple]Loading archive details...[/purple]"):
+                                                detail_response = api_client._request("GET", f"librarian/archives/{archive_id}/")
+                                            
+                                            if detail_response and "archive" in detail_response:
+                                                archive_info = detail_response["archive"]
+                                                metadata = archive_info.get("archive_metadata", {})
+                                                detail_panel = Panel(
+                                                    f"[bold]Archive Details[/bold]\n"
+                                                    f"[yellow]Archive ID:[/yellow] {archive_info.get('archive_id', 'Unknown')}\n"
+                                                    f"[yellow]Source Type:[/yellow] {metadata.get('source_type', 'Unknown')}\n"
+                                                    f"[yellow]Source Path:[/yellow] {metadata.get('source_path', 'Unknown')}\n"
+                                                    f"[yellow]Ingested At:[/yellow] {metadata.get('ingested_at', 'Unknown')}\n"
+                                                    f"[yellow]Total Files:[/yellow] {archive_info.get('total_files', 0)}\n"
+                                                    f"[yellow]Directory Size:[/yellow] {metadata.get('directory_stats', {}).get('directory_size_mb', 0)} MB",
+                                                    title=f"📁 Archive: {archive_id}",
+                                                    border_style="purple"
+                                                )
+                                                console.print(detail_panel)
+                                        else:
+                                            console.print("[red]Invalid choice.[/red]")
+                                    except (ValueError, KeyboardInterrupt):
+                                        continue
+                                
+                                elif action == "ask":
+                                    if not archives:
+                                        console.print("[yellow]No archives available for questioning.[/yellow]")
+                                        continue
+                                    
+                                    # Show archive choices
+                                    console.print("\n[bold]Select an archive to query:[/bold]")
+                                    for i, archive in enumerate(archives[:10], 1):
+                                        console.print(f"[cyan]{i}[/cyan]. {archive.get('archive_id', 'unknown')}")
+                                    
+                                    try:
+                                        choice = int(Prompt.ask("Archive number")) - 1
+                                        if 0 <= choice < len(archives):
+                                            archive_id = archives[choice]["archive_id"]
+                                            question = Prompt.ask(f"\n[bold]Ask a question about archive '{archive_id}'[/bold]")
+                                            
+                                            if question.strip():
+                                                with Status("[purple]The Librarian is consulting the archives...[/purple]"):
+                                                    ask_response = api_client._request("POST", "librarian/ask/", 
+                                                                                     json={"archive_id": archive_id, "question": question})
+                                                
+                                                if ask_response and "answer" in ask_response:
+                                                    answer = ask_response["answer"]
+                                                    sources = ask_response.get("sources", [])
+                                                    
+                                                    answer_panel = Panel(
+                                                        f"[bold]Answer from Archive '{archive_id}'[/bold]\n\n"
+                                                        f"{answer}\n\n"
+                                                        f"[dim]Sources: {', '.join(sources[:3])}[/dim]" if sources else "",
+                                                        title="🔮 Archive Oracle Response",
+                                                        border_style="purple"
+                                                    )
+                                                    console.print(answer_panel)
+                                                else:
+                                                    error_msg = ask_response.get("error", "Unknown error") if ask_response else "No response"
+                                                    console.print(f"[red]❌ Query failed: {error_msg}[/red]")
+                                        else:
+                                            console.print("[red]Invalid choice.[/red]")
+                                    except (ValueError, KeyboardInterrupt):
+                                        continue
+                                else:
+                                    console.print("[yellow]Unknown action. Available: ingest, list, details, ask[/yellow]")
+                            except KeyboardInterrupt:
+                                break
+                    else:
+                        console.print("[red]❌ Failed to load archives[/red]")
+                        
+                except Exception as e:
+                    console.print(f"[red]❌ Librarian error: {e}[/red]")
+                
+                context = {}
+                continue
+
+            elif command.lower() in ("loremaster", "lm"):
+                if not cli_state.get("model"):
+                    console.print("[bold red]Please select a model first using the 'config' command.[/bold red]")
+                    continue
+
+                # Get repository to analyze
+                repo_url = context.get("repo_url")
+                if not repo_url:
+                    analyzed_repos = find_analyzed_repos()
+                    if not analyzed_repos:
+                        console.print("[yellow]No analyzed repositories found. Use 'analyze' to ingest a repo first.[/yellow]")
+                        continue
+                    console.print(Panel("Select a repository for API documentation generation.", title="[blue]📚 The Loremaster[/blue]", border_style="blue"))
+                    table = Table(show_header=False, box=None, padding=(0, 2))
+                    for i, repo in enumerate(analyzed_repos, 1): 
+                        table.add_row(f"([bold cyan]{i}[/bold cyan])", repo['display_name'])
+                    console.print(table)
+                    try:
+                        choice = Prompt.ask("Enter choice", choices=[str(i) for i in range(1, len(analyzed_repos) + 1)], show_choices=False, default='1')
+                        repo_url = analyzed_repos[int(choice) - 1]['url']
+                    except (ValueError, IndexError, KeyboardInterrupt): 
+                        continue
+
+                repo_id = repo_url.replace("https://github.com/", "").replace("/", "_")
+                
+                # Show Loremaster menu
+                console.print("\n[bold blue]📚 The Loremaster's Codex[/bold blue] - Interactive API Documentation")
+                console.print("[dim]Generating living documentation and client code from your API architecture.[/dim]\n")
+                
+                try:
+                    # Get API inventory
+                    with Status("[blue]Cataloging API endpoints...[/blue]"):
+                        inventory_response = api_client._request("GET", f"loremaster/{repo_id}/inventory/")
+                    
+                    if inventory_response and "endpoints" in inventory_response:
+                        endpoints = inventory_response["endpoints"]
+                        
+                        # Display API inventory
+                        if endpoints:
+                            api_table = Table(title="🔗 API Endpoint Inventory", show_header=True, header_style="bold blue")
+                            api_table.add_column("Method", style="cyan")
+                            api_table.add_column("Path", style="white")
+                            api_table.add_column("Function", style="yellow")
+                            api_table.add_column("File", style="dim white")
+                            
+                            for endpoint in endpoints[:15]:  # Show top 15
+                                api_table.add_row(
+                                    endpoint.get("method", "GET"),
+                                    endpoint.get("path", "/unknown"),
+                                    endpoint.get("function_name", "unknown"),
+                                    endpoint.get("file_path", "unknown")[:30] + "..."
+                                )
+                            console.print(api_table)
+                        else:
+                            console.print("[yellow]⚠️ No API endpoints detected in this repository[/yellow]")
+                        
+                        # Show available actions
+                        actions_panel = Panel(
+                            "[bold]Available Actions:[/bold]\n"
+                            "[yellow]spec[/yellow] - Generate OpenAPI 3.0 specification\n"
+                            "[yellow]docs[/yellow] - Generate interactive documentation page\n"
+                            "[yellow]client[/yellow] - Generate client code snippet\n"
+                            "[yellow]inventory[/yellow] - Refresh endpoint inventory\n"
+                            "[dim]Type action name or 'back' to exit[/dim]",
+                            title="📚 Loremaster Commands",
+                            border_style="blue"
+                        )
+                        console.print(actions_panel)
+                        
+                        # Action selection loop
+                        while True:
+                            try:
+                                action = Prompt.ask("\n[bold blue]Loremaster Action[/bold blue]").strip().lower()
+                                
+                                if action in ("back", "exit", "quit"):
+                                    break
+                                elif action == "spec":
+                                    with Status("[blue]Generating OpenAPI specification...[/blue]"):
+                                        spec_response = api_client._request("GET", f"loremaster/{repo_id}/openapi-spec/")
+                                    if spec_response and "openapi_spec" in spec_response:
+                                        spec = spec_response["openapi_spec"]
+                                        spec_panel = Panel(
+                                            f"[bold]OpenAPI 3.0 Specification Generated[/bold]\n"
+                                            f"[yellow]Title:[/yellow] {spec.get('info', {}).get('title', 'API')}\n"
+                                            f"[yellow]Version:[/yellow] {spec.get('info', {}).get('version', '1.0.0')}\n"
+                                            f"[yellow]Endpoints:[/yellow] {len(spec.get('paths', {}))}\n"
+                                            f"[yellow]Components:[/yellow] {len(spec.get('components', {}).get('schemas', {}))}\n\n"
+                                            f"[dim]Full specification available via API endpoint[/dim]",
+                                            title="📋 OpenAPI Spec",
+                                            border_style="blue"
+                                        )
+                                        console.print(spec_panel)
+                                elif action == "docs":
+                                    with Status("[blue]Generating interactive documentation...[/blue]"):
+                                        docs_response = api_client._request("GET", f"loremaster/{repo_id}/documentation/")
+                                    if docs_response and "documentation_url" in docs_response:
+                                        docs_url = docs_response["documentation_url"]
+                                        docs_panel = Panel(
+                                            f"[bold]Interactive Documentation Generated[/bold]\n"
+                                            f"[yellow]Documentation URL:[/yellow] {docs_url}\n"
+                                            f"[yellow]Features:[/yellow] Swagger UI, Try-it-out functionality\n"
+                                            f"[yellow]Status:[/yellow] ✅ Ready to use\n\n"
+                                            f"[dim]Open the URL in your browser to explore the interactive docs[/dim]",
+                                            title="🌐 Interactive Docs",
+                                            border_style="blue"
+                                        )
+                                        console.print(docs_panel)
+                                elif action == "client":
+                                    # Get client preferences
+                                    language = Prompt.ask("Client language", choices=["python", "javascript", "curl"], default="python")
+                                    framework = ""
+                                    if language == "python":
+                                        framework = Prompt.ask("Python framework", choices=["requests", "httpx", "aiohttp"], default="requests")
+                                    elif language == "javascript":
+                                        framework = Prompt.ask("JavaScript framework", choices=["fetch", "axios", "node-fetch"], default="fetch")
+                                    
+                                    with Status(f"[blue]Generating {language} client code...[/blue]"):
+                                        client_response = api_client._request("POST", f"loremaster/{repo_id}/client-snippet/", 
+                                                                            json={"language": language, "framework": framework})
+                                    if client_response and "client_code" in client_response:
+                                        client_code = client_response["client_code"]
+                                        console.print(Panel(
+                                            f"[bold]{language.title()} Client Code Snippet[/bold]\n\n"
+                                            f"```{language}\n{client_code}\n```",
+                                            title=f"🔧 {language.title()} Client",
+                                            border_style="blue"
+                                        ))
+                                elif action == "inventory":
+                                    with Status("[blue]Refreshing API inventory...[/blue]"):
+                                        inventory_response = api_client._request("GET", f"loremaster/{repo_id}/inventory/")
+                                    if inventory_response and "endpoints" in inventory_response:
+                                        endpoints = inventory_response["endpoints"]
+                                        console.print(f"[green]✅ Inventory refreshed. Found {len(endpoints)} endpoints.[/green]")
+                                else:
+                                    console.print("[yellow]Unknown action. Available: spec, docs, client, inventory[/yellow]")
+                            except KeyboardInterrupt:
+                                break
+                    else:
+                        console.print("[red]❌ Failed to load API inventory[/red]")
+                        
+                except Exception as e:
+                    console.print(f"[red]❌ Loremaster error: {e}[/red]")
+                
+                context = {}
+                continue
+
+            elif command.lower() in ("quartermaster", "qm"):
+                if not cli_state.get("model"):
+                    console.print("[bold red]Please select a model first using the 'config' command.[/bold red]")
+                    continue
+
+                # Get repository to analyze
+                repo_url = context.get("repo_url")
+                if not repo_url:
+                    analyzed_repos = find_analyzed_repos()
+                    if not analyzed_repos:
+                        console.print("[yellow]No analyzed repositories found. Use 'analyze' to ingest a repo first.[/yellow]")
+                        continue
+                    console.print(Panel("Select a repository for supply-chain management.", title="[green]⚖️ The Quartermaster[/green]", border_style="green"))
+                    table = Table(show_header=False, box=None, padding=(0, 2))
+                    for i, repo in enumerate(analyzed_repos, 1): 
+                        table.add_row(f"([bold cyan]{i}[/bold cyan])", repo['display_name'])
+                    console.print(table)
+                    try:
+                        choice = Prompt.ask("Enter choice", choices=[str(i) for i in range(1, len(analyzed_repos) + 1)], show_choices=False, default='1')
+                        repo_url = analyzed_repos[int(choice) - 1]['url']
+                    except (ValueError, IndexError, KeyboardInterrupt): 
+                        continue
+
+                repo_id = repo_url.replace("https://github.com/", "").replace("/", "_")
+                
+                # Show Quartermaster dashboard
+                console.print("\n[bold green]⚖️ The Quartermaster's Inventory[/bold green] - Supply-Chain Management Dashboard")
+                console.print("[dim]Managing dependencies, vulnerabilities, and compliance for your digital supply chain.[/dim]\n")
+                
+                try:
+                    # Get dashboard data
+                    with Status("[green]Loading supply-chain health dashboard...[/green]"):
+                        response = api_client._request("GET", f"quartermaster/{repo_id}/dashboard/")
+                    
+                    if response and "error" not in response:
+                        # Display dashboard
+                        dashboard = response.get("dashboard", {})
+                        
+                        # Health overview
+                        health_table = Table(title="🎯 Supply-Chain Health Overview", show_header=True, header_style="bold green")
+                        health_table.add_column("Metric", style="cyan")
+                        health_table.add_column("Status", style="white")
+                        health_table.add_column("Count", style="yellow")
+                        
+                        health_table.add_row("🔍 Dependencies Scanned", "✅ Complete", str(dashboard.get("total_dependencies", 0)))
+                        health_table.add_row("🚨 Critical Vulnerabilities", "⚠️ Found" if dashboard.get("critical_vulnerabilities", 0) > 0 else "✅ Clean", str(dashboard.get("critical_vulnerabilities", 0)))
+                        health_table.add_row("📄 License Violations", "⚠️ Found" if dashboard.get("license_violations", 0) > 0 else "✅ Compliant", str(dashboard.get("license_violations", 0)))
+                        health_table.add_row("📊 Overall Health Score", "✅ Good" if dashboard.get("health_score", 0) >= 80 else "⚠️ Needs Attention", f"{dashboard.get('health_score', 0)}/100")
+                        
+                        console.print(health_table)
+                        
+                        # Show available actions
+                        actions_panel = Panel(
+                            "[bold]Available Actions:[/bold]\n"
+                            "[yellow]vuln[/yellow] - Check vulnerabilities\n"
+                            "[yellow]license[/yellow] - Check license compliance\n"
+                            "[yellow]upgrade[/yellow] - Simulate dependency upgrades\n"
+                            "[yellow]risk[/yellow] - Generate risk assessment report\n"
+                            "[dim]Type action name or 'back' to exit[/dim]",
+                            title="⚖️ Quartermaster Commands",
+                            border_style="green"
+                        )
+                        console.print(actions_panel)
+                        
+                        # Action selection loop
+                        while True:
+                            try:
+                                action = Prompt.ask("\n[bold green]Quartermaster Action[/bold green]").strip().lower()
+                                
+                                if action in ("back", "exit", "quit"):
+                                    break
+                                elif action == "vuln":
+                                    with Status("[green]Scanning for vulnerabilities...[/green]"):
+                                        vuln_response = api_client._request("GET", f"quartermaster/{repo_id}/vulnerabilities/")
+                                    if vuln_response and "vulnerabilities" in vuln_response:
+                                        vulnerabilities = vuln_response["vulnerabilities"]
+                                        if vulnerabilities:
+                                            vuln_table = Table(title="🚨 Vulnerability Report", show_header=True, header_style="bold red")
+                                            vuln_table.add_column("Severity", style="red")
+                                            vuln_table.add_column("Package", style="cyan")
+                                            vuln_table.add_column("CVE ID", style="yellow")
+                                            vuln_table.add_column("Summary", style="white")
+                                            
+                                            for vuln in vulnerabilities[:10]:  # Show top 10
+                                                vuln_table.add_row(
+                                                    vuln.get("severity", "Unknown"),
+                                                    vuln.get("package_name", "Unknown"),
+                                                    vuln.get("cve_id", "N/A"),
+                                                    vuln.get("summary", "No summary available")[:50] + "..."
+                                                )
+                                            console.print(vuln_table)
+                                        else:
+                                            console.print("[green]✅ No vulnerabilities found![/green]")
+                                elif action == "license":
+                                    with Status("[green]Checking license compliance...[/green]"):
+                                        license_response = api_client._request("POST", f"quartermaster/{repo_id}/check-license-compliance/", 
+                                                                             json={"policy": {"allowed_licenses": ["MIT", "Apache-2.0", "BSD-3-Clause"]}})
+                                    if license_response and "violations" in license_response:
+                                        violations = license_response["violations"]
+                                        if violations:
+                                            license_table = Table(title="📄 License Compliance Report", show_header=True, header_style="bold yellow")
+                                            license_table.add_column("Package", style="cyan")
+                                            license_table.add_column("License", style="red")
+                                            license_table.add_column("Severity", style="yellow")
+                                            license_table.add_column("Reason", style="white")
+                                            
+                                            for violation in violations[:10]:
+                                                license_table.add_row(
+                                                    violation.get("package_name", "Unknown"),
+                                                    violation.get("license", "Unknown"),
+                                                    violation.get("severity", "Unknown"),
+                                                    violation.get("reason", "Policy violation")
+                                                )
+                                            console.print(license_table)
+                                        else:
+                                            console.print("[green]✅ All licenses are compliant![/green]")
+                                elif action == "upgrade":
+                                    package_name = Prompt.ask("Package to simulate upgrade for")
+                                    target_version = Prompt.ask("Target version (optional)", default="latest")
+                                    
+                                    with Status("[green]Simulating upgrade...[/green]"):
+                                        upgrade_response = api_client._request("POST", f"quartermaster/{repo_id}/simulate-upgrade/", 
+                                                                             json={"package_name": package_name, "target_version": target_version})
+                                    if upgrade_response and "simulation_result" in upgrade_response:
+                                        result = upgrade_response["simulation_result"]
+                                        upgrade_panel = Panel(
+                                            f"[bold]Upgrade Simulation Results[/bold]\n"
+                                            f"[yellow]Package:[/yellow] {result.get('package_name', 'Unknown')}\n"
+                                            f"[yellow]Current Version:[/yellow] {result.get('current_version', 'Unknown')}\n"
+                                            f"[yellow]Target Version:[/yellow] {result.get('target_version', 'Unknown')}\n"
+                                            f"[yellow]Success:[/yellow] {'✅ Yes' if result.get('success') else '❌ No'}\n"
+                                            f"[yellow]Impact:[/yellow] {result.get('impact_summary', 'No impact summary available')}",
+                                            title="🔄 Upgrade Simulation",
+                                            border_style="blue"
+                                        )
+                                        console.print(upgrade_panel)
+                                elif action == "risk":
+                                    with Status("[green]Generating risk assessment...[/green]"):
+                                        risk_response = api_client._request("GET", f"quartermaster/{repo_id}/risk-report/")
+                                    if risk_response and "risk_assessment" in risk_response:
+                                        assessment = risk_response["risk_assessment"]
+                                        risk_panel = Panel(
+                                            f"[bold]Risk Assessment Report[/bold]\n"
+                                            f"[yellow]Overall Risk Level:[/yellow] {assessment.get('overall_risk_level', 'Unknown')}\n"
+                                            f"[yellow]Supply Chain Score:[/yellow] {assessment.get('supply_chain_score', 0)}/100\n"
+                                            f"[yellow]Key Recommendations:[/yellow]\n{chr(10).join(f'• {rec}' for rec in assessment.get('recommendations', []))}",
+                                            title="📊 Risk Assessment",
+                                            border_style="red"
+                                        )
+                                        console.print(risk_panel)
+                                else:
+                                    console.print("[yellow]Unknown action. Available: vuln, license, upgrade, risk[/yellow]")
+                            except KeyboardInterrupt:
+                                break
+                    else:
+                        console.print("[red]❌ Failed to load Quartermaster dashboard[/red]")
+                        
+                except Exception as e:
+                    console.print(f"[red]❌ Quartermaster error: {e}[/red]")
+                
+                context = {}
+                continue
 
             elif command.lower() in ("repo-mgmt", "rm"):
                 if not cli_state.get("model"):

@@ -39,15 +39,20 @@ class TreeSitterConfig:
 
     def _initialize(self) -> None:
         """Initialize Tree-sitter parser for JavaScript."""
-        try:
-            from tree_sitter import Language, Parser, Node
-            TREE_SITTER_AVAILABLE = True
-        except ImportError:
-            TREE_SITTER_AVAILABLE = False
-            logging.warning("Tree-sitter not available. JavaScript analysis will be limited.")
+        if not self.library_path.exists():
+            logger.warning(f"Language library not found at {self.library_path}")
+            logger.warning("Please run 'python build_parsers.py' from the 'backend' directory.")
+            return
 
-        # Configure logging
-        logger = logging.getLogger(__name__)
+        try:
+            self.js_language = Language(str(self.library_path), 'javascript')
+            self.js_parser = Parser()
+            self.js_parser.set_language(self.js_language)
+            self.is_ready = True
+            logger.info("✓ Tree-sitter JavaScript parser is ready.")
+        except Exception as e:
+            logger.error(f"Failed to load JavaScript parser: {e}")
+            self.is_ready = False
 
 
 # Global Tree-sitter configuration
@@ -158,7 +163,7 @@ class JavaScriptMapper:
         "requires": '(call_expression function: (identifier) @func (#eq? @func "require") arguments: (arguments (string (string_fragment) @module)))',
         "imports": '(import_statement source: (string (string_fragment) @module))',
         "functions": '(function_declaration name: (identifier) @name)',
-        "arrow_functions": '(variable_declarator id: (identifier) @name value: (arrow_function))',
+        "arrow_functions": '(variable_declarator name: (identifier) @name value: (arrow_function))',
         "classes": '(class_declaration name: (identifier) @name)',
         "calls": '(call_expression function: [ (identifier) @name (member_expression property: (property_identifier) @name) ] )',
         "exports": '(export_statement declaration: (function_declaration name: (identifier) @name))'

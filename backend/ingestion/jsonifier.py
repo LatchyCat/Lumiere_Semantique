@@ -4,9 +4,24 @@ import datetime
 import ast
 import re
 from typing import List, Dict, TypedDict, Optional, Any, Tuple
+from dataclasses import asdict, dataclass
 from tqdm import tqdm
 
 from lumiere_core.services import cartographer
+from lumiere_core.services import bom_parser
+
+
+@dataclass
+class APIEndpoint:
+    """
+    Standardized data structure to represent a single API endpoint.
+    """
+    path: str
+    methods: List[str]
+    handler_function_name: str
+    start_line: int
+    end_line: int
+    framework: str
 
 
 class TextChunk(TypedDict):
@@ -28,6 +43,7 @@ class FileCortex(TypedDict):
     text_chunks: List[TextChunk]
     detected_language: str
     framework_hints: List[str]
+    api_endpoints: List[Dict[str, Any]]
 
 
 class ProjectCortex(TypedDict):
@@ -40,6 +56,7 @@ class ProjectCortex(TypedDict):
     architectural_graph: Optional[Dict[str, Any]]
     language_statistics: Dict[str, Any]
     polyglot_summary: Dict[str, Any]
+    tech_stack_bom: Optional[Dict[str, Any]]
 
 
 class PolyglotChunker:
@@ -473,6 +490,46 @@ class Jsonifier:
     runs the Cartographer, and builds the Project Cortex JSON object.
     """
 
+    # Framework-specific regex patterns for API endpoint detection
+    ROUTE_PATTERNS = {
+        'flask': {
+            'pattern': r"@[\w\.]*\.route\(['\"](?P<path>[^'\"]+)['\"].*?(?:methods\s*=\s*\[(?P<methods>[^\]]+)\])?\)\s*\ndef\s+(?P<handler_function_name>\w+)",
+            'framework': 'Flask'
+        },
+        'django': {
+            'pattern': r"(?:url|path)\(['\"](?P<path>[^'\"]+)['\"],\s*(?P<handler_function_name>\w+)",
+            'framework': 'Django'
+        },
+        'django_rest': {
+            'pattern': r"class\s+(?P<handler_function_name>\w+)\(.*?APIView.*?\):|@api_view\(\[(?P<methods>[^\]]+)\]\)\s*\ndef\s+(?P<handler_function_name>\w+)",
+            'framework': 'DjangoRestFramework'
+        },
+        'fastapi': {
+            'pattern': r"@[\w\.]*\.(?P<method>get|post|put|delete|patch)\(['\"](?P<path>[^'\"]+)['\"].*?\)\s*\n(?:async\s+)?def\s+(?P<handler_function_name>\w+)",
+            'framework': 'FastAPI'
+        },
+        'express': {
+            'pattern': r"app\.(?P<method>get|post|put|delete|patch|use)\(['\"](?P<path>[^'\"]+)['\"],\s*(?:function\s*\(.*?\)|(?P<handler_function_name>\w+)|\(.*?\)\s*=>\s*\{)",
+            'framework': 'Express'
+        },
+        'spring': {
+            'pattern': r"@(?P<method>GetMapping|PostMapping|PutMapping|DeleteMapping|RequestMapping)\((?:value\s*=\s*)?['\"](?P<path>[^'\"]+)['\"].*?\)\s*\n\s*(?:public\s+)?[\w<>]+\s+(?P<handler_function_name>\w+)",
+            'framework': 'Spring'
+        },
+        'gin': {
+            'pattern': r"(?:router|engine)\.(?P<method>GET|POST|PUT|DELETE|PATCH)\(['\"](?P<path>[^'\"]+)['\"],\s*(?P<handler_function_name>\w+)",
+            'framework': 'Gin'
+        },
+        'laravel': {
+            'pattern': r"Route::(?P<method>get|post|put|delete|patch)\(['\"](?P<path>[^'\"]+)['\"],\s*['\"](?P<handler_function_name>[^'\"]+)['\"]",
+            'framework': 'Laravel'
+        },
+        'rails': {
+            'pattern': r"(?P<method>get|post|put|delete|patch)\s+['\"](?P<path>[^'\"]+)['\"],\s*to:\s*['\"](?P<handler_function_name>[^'\"]+)['\"]",
+            'framework': 'Rails'
+        }
+    }
+
     def __init__(self, file_paths: List[pathlib.Path], repo_root: pathlib.Path, repo_id: str):
         self.file_paths = file_paths
         self.repo_root = repo_root
@@ -567,6 +624,99 @@ class Jsonifier:
 
         return json.dumps(summary, indent=2)
 
+    def _extract_api_endpoints(self, file_content: str, language: str) -> List[APIEndpoint]:
+        """
+        Extract API endpoint information from file content using framework-specific regex patterns.
+        
+        Args:
+            file_content: The full text content of the file
+            language: The detected programming language
+            
+        Returns:
+            List of APIEndpoint objects found in the file
+        """
+        found_endpoints = []
+        
+        # Skip extraction for non-web languages
+        if language not in ['python', 'javascript', 'typescript', 'java', 'go', 'php', 'ruby']:
+            return found_endpoints
+            
+        # Use re.DOTALL to allow . to match newlines for multi-line patterns
+        flags = re.MULTILINE | re.DOTALL | re.IGNORECASE
+        
+        # Try each framework pattern
+        for framework_key, pattern_info in self.ROUTE_PATTERNS.items():
+            pattern = pattern_info['pattern']
+            framework_name = pattern_info['framework']
+            
+            try:
+                for match in re.finditer(pattern, file_content, flags):
+                    match_data = match.groupdict()
+                    
+                    # Extract path - required field
+                    path = match_data.get('path', '')
+                    if not path:
+                        continue
+                        
+                    # Extract handler function name - required field
+                    handler_name = match_data.get('handler_function_name', '')
+                    if not handler_name:
+                        # For some patterns, we might have anonymous handlers
+                        handler_name = f"anonymous_{framework_key}_{match.start()}"
+                    
+                    # Extract and process methods
+                    methods = []
+                    if 'methods' in match_data and match_data['methods']:
+                        # Clean up methods string - remove quotes and split
+                        methods_str = match_data['methods']
+                        methods_str = re.sub(r'[\'"\[\]]', '', methods_str)
+                        methods = [m.strip().upper() for m in methods_str.split(',') if m.strip()]
+                    elif 'method' in match_data and match_data['method']:
+                        # Single method from pattern
+                        method = match_data['method'].upper()
+                        # Map some Spring annotations to HTTP methods
+                        method_mapping = {
+                            'GETMAPPING': 'GET',
+                            'POSTMAPPING': 'POST', 
+                            'PUTMAPPING': 'PUT',
+                            'DELETEMAPPING': 'DELETE',
+                            'REQUESTMAPPING': 'GET'  # Default for RequestMapping
+                        }
+                        methods = [method_mapping.get(method, method)]
+                    else:
+                        # Default methods based on framework
+                        if framework_key in ['django', 'django_rest']:
+                            methods = ['GET', 'POST']  # Django views typically handle both
+                        else:
+                            methods = ['GET']  # Default assumption
+                    
+                    # Calculate line numbers
+                    start_line = file_content[:match.start()].count('\n') + 1
+                    end_line = file_content[:match.end()].count('\n') + 1
+                    
+                    # Create APIEndpoint object
+                    endpoint = APIEndpoint(
+                        path=path,
+                        methods=methods,
+                        handler_function_name=handler_name,
+                        start_line=start_line,
+                        end_line=end_line,
+                        framework=framework_name
+                    )
+                    
+                    found_endpoints.append(endpoint)
+                    
+            except re.error as e:
+                # Log regex errors but continue processing
+                print(f"  ⚠️  Regex error for {framework_key}: {e}")
+                continue
+            except Exception as e:
+                # Log other errors but continue processing
+                print(f"  ⚠️  Error processing {framework_key} pattern: {e}")
+                continue
+        
+        return found_endpoints
+
     def generate_cortex(self) -> ProjectCortex:
         """
         Enhanced cortex generation with comprehensive polyglot support.
@@ -602,6 +752,9 @@ class Jsonifier:
 
             # Code quality analysis
             code_smells = self._analyze_code_quality(content, detected_language, relative_path_str)
+
+            # Extract API endpoints
+            api_endpoints = self._extract_api_endpoints(content, detected_language)
 
             # Prepare data for Cartographer based on language
             if detected_language == 'python':
@@ -672,7 +825,8 @@ class Jsonifier:
                 "ast_summary": self._create_ast_summary(raw_chunks, detected_language),
                 "text_chunks": text_chunks,
                 "detected_language": detected_language,
-                "framework_hints": framework_hints
+                "framework_hints": framework_hints,
+                "api_endpoints": [asdict(ep) for ep in api_endpoints]
             }
 
             all_files_cortex.append(file_cortex)
@@ -704,6 +858,41 @@ class Jsonifier:
         }
 
         print(f"✅ Analysis complete! Detected {len(language_stats)} languages across {len(all_files_cortex)} files")
+        
+        # Generate author contribution map for expertise tracking
+        print("👥 Generating author contribution map...")
+        author_contribution_map = self._generate_author_contribution_map()
+        
+        # Save blame cache to separate file
+        blame_cache_path = self.repo_root / f"{self.repo_id}_blame_cache.json"
+        try:
+            with open(blame_cache_path, 'w', encoding='utf-8') as f:
+                json.dump(author_contribution_map, f, indent=2)
+            print(f"✓ Blame cache saved to {blame_cache_path}")
+        except Exception as e:
+            print(f"⚠️  Could not save blame cache: {e}")
+
+        print("📋 Generating Tech Stack Bill of Materials...")
+        final_bom_dict = None
+        try:
+            # The bom_parser now correctly returns a dataclass object.
+            tech_stack_bom_obj = bom_parser.parse_all_manifests(self.repo_root)
+
+            # --- START OF FIX ---
+            if tech_stack_bom_obj:
+                # Access the attributes directly from the object
+                deps_count = tech_stack_bom_obj.summary.get('total_dependencies', 0)
+                print(f"✓ BOM Generated. Found {deps_count} total dependencies.")
+                # Convert to a dictionary for JSON serialization at the end
+                final_bom_dict = asdict(tech_stack_bom_obj)
+            else:
+                print("✓ No dependency manifests found for BOM generation.")
+                # Set a default value to ensure the key exists in the cortex
+                final_bom_dict = {}
+            # --- END OF FIX ---
+        except Exception as e:
+            print(f"⚠️  Could not generate Bill of Materials: {e}")
+            final_bom_dict = {"error": str(e)}
 
         # Assemble the enhanced Project Cortex object
         return {
@@ -716,7 +905,56 @@ class Jsonifier:
             "architectural_graph": architectural_graph,
             "language_statistics": language_stats,
             "polyglot_summary": polyglot_summary,
+            "tech_stack_bom": final_bom_dict, # Assign the final dictionary
         }
+
+    def _generate_author_contribution_map(self) -> Dict[str, Dict[str, int]]:
+        """
+        Generate an author contribution map by running git blame on all processed files.
+        
+        Returns:
+            Dictionary mapping file paths to author email -> line count mappings
+            Structure: { "file_path_1": { "author_email_1": line_count, "author_email_2": line_count }, ... }
+        """
+        from ingestion.crawler import IntelligentCrawler
+        
+        contribution_map = {}
+        
+        # We need to create a temporary crawler instance to access git blame functionality
+        # Since we're already processing files from a cloned repo, we can initialize with repo_root
+        try:
+            # Use a temporary crawler context to access git blame
+            with IntelligentCrawler(str(self.repo_root.parent), shallow=True) as crawler:
+                # Switch to the correct repo directory
+                crawler.repo_path = self.repo_root
+                
+                for file_path in self.file_paths:
+                    try:
+                        relative_path_str = str(file_path.relative_to(self.repo_root))
+                        
+                        # Get blame data for this file
+                        blame_data = crawler.get_blame_data_for_file(relative_path_str)
+                        
+                        if blame_data:
+                            # Aggregate line counts by author email
+                            author_lines = {}
+                            for line_data in blame_data:
+                                email = line_data.get('email', 'unknown@example.com')
+                                author_lines[email] = author_lines.get(email, 0) + 1
+                            
+                            contribution_map[relative_path_str] = author_lines
+                            
+                    except Exception as e:
+                        # Log but don't fail the whole process for individual files
+                        print(f"  ⚠️  Could not get blame data for {relative_path_str}: {e}")
+                        contribution_map[str(file_path.relative_to(self.repo_root))] = {}
+                        
+        except Exception as e:
+            print(f"  ⚠️  Could not initialize crawler for blame analysis: {e}")
+            # Return empty map if we can't get blame data
+            return {}
+            
+        return contribution_map
 
     def _calculate_health_score(self, files: List[FileCortex], language_stats: Dict) -> float:
         """Calculate a basic project health score based on various metrics."""

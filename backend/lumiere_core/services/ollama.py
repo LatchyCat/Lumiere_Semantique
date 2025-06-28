@@ -35,25 +35,32 @@ def search_index(
     model_name: str,
     repo_id: str, # <--- MODIFIED: Take repo_id directly
     k: int = 10,
+    artifact_type: str = 'repo', # <--- NEW: Support for archives
     **kwargs # <--- MODIFIED: Accept and ignore old path args for compatibility
 ) -> List[dict]:
     """
-    Searches the Faiss index for the top k most similar chunks to a query for a given repo_id.
+    Searches the Faiss index for the top k most similar chunks to a query for a given repo_id or archive_id.
 
     Args:
         query_text: The user's search query.
         model_name: The name of the Ollama model used to create the index.
-        repo_id: The unique ID of the repository whose index should be searched.
+        repo_id: The unique ID of the repository/archive whose index should be searched.
         k: The number of results to return.
+        artifact_type: 'repo' for repositories, 'archive' for local archives.
 
     Returns:
         A list of dictionaries, where each dictionary contains the chunk_id,
         file_path, and the original text of the matching chunk.
     """
-    # --- THIS IS THE FIX ---
-    # Centralize path construction based on repo_id.
+    # --- SUPPORT FOR ARCHIVES ---
+    # Determine paths based on artifact type
     backend_dir = Path(__file__).resolve().parent.parent.parent
-    artifacts_dir = backend_dir / "cloned_repositories" / repo_id
+    
+    if artifact_type == 'archive':
+        artifacts_dir = backend_dir / "local_archives" / repo_id
+    else:
+        artifacts_dir = backend_dir / "cloned_repositories" / repo_id
+    
     index_path = artifacts_dir / f"{repo_id}_faiss.index"
     map_path = artifacts_dir / f"{repo_id}_id_map.json"
 

@@ -1,4 +1,4 @@
-# In backend/api/urls.py
+# Enhanced backend/api/urls.py
 
 from django.urls import path
 from .views import (
@@ -10,6 +10,33 @@ from .views import (
     IngestRepositoryView, GraphDataView, OracleView,
     AdjudicateView, HarmonizeView, SentinelBriefingView,
     SuggestActionsView,
+
+    # Enhanced BOM Views
+    BomDataView, BomDependenciesView, BomServicesView,
+    BomSecurityView, BomRegenerateView, BomCompareView,
+
+    # Quartermaster Views
+    QuartermasterDashboardView, QuartermasterVulnerabilitiesView,
+    QuartermasterSimulateUpgradeView, QuartermasterLicenseComplianceView,
+    QuartermasterRiskReportView,
+
+    # Loremaster Views
+    LoremasterApiInventoryView, LoremasterOpenApiSpecView,
+    LoremasterDocumentationView, LoremasterClientSnippetView,
+
+    # Librarian Views
+    LibrarianIngestView, LibrarianListArchivesView,
+    LibrarianArchiveDetailView, LibrarianAskView,
+
+    # Onboarding Concierge Views
+    ExpertiseView, OnboardingGuideView,
+
+    # API Endpoint Inventory View
+    ApiEndpointInventoryView,
+
+    # GET and DELETE methods for the /api/v1/repositories/{repo_id}/
+    ListRepositoriesView, RepositoryDetailView,
+    RepositoryStatusView, SentinelMetricsHistoryView
 )
 
 urlpatterns = [
@@ -18,6 +45,35 @@ urlpatterns = [
 
     # --- SUGGESTER ENDPOINT ---
     path('suggest-actions/', SuggestActionsView.as_view(), name='suggest_actions'),
+
+
+    # --- BILL OF MATERIALS (BOM) ENDPOINTS ---
+    path('bom/', BomDataView.as_view(), name='bom_data'),
+    path('bom/dependencies/', BomDependenciesView.as_view(), name='bom_dependencies'),
+    path('bom/services/', BomServicesView.as_view(), name='bom_services'),
+    path('bom/security/', BomSecurityView.as_view(), name='bom_security'),
+    path('bom/regenerate/', BomRegenerateView.as_view(), name='bom_regenerate'),
+    path('bom/compare/', BomCompareView.as_view(), name='bom_compare'),
+
+    # --- QUARTERMASTER ENDPOINTS ---
+    path('quartermaster/<str:repo_id>/dashboard/', QuartermasterDashboardView.as_view(), name='quartermaster_dashboard'),
+    path('quartermaster/<str:repo_id>/vulnerabilities/', QuartermasterVulnerabilitiesView.as_view(), name='quartermaster_vulnerabilities'),
+    path('quartermaster/<str:repo_id>/simulate-upgrade/', QuartermasterSimulateUpgradeView.as_view(), name='quartermaster_simulate_upgrade'),
+    path('quartermaster/<str:repo_id>/check-license-compliance/', QuartermasterLicenseComplianceView.as_view(), name='quartermaster_license_compliance'),
+    path('quartermaster/<str:repo_id>/risk-report/', QuartermasterRiskReportView.as_view(), name='quartermaster_risk_report'),
+
+    # --- LOREMASTER ENDPOINTS ---
+    path('loremaster/<str:repo_id>/inventory/', LoremasterApiInventoryView.as_view(), name='loremaster_inventory'),
+    path('loremaster/<str:repo_id>/openapi-spec/', LoremasterOpenApiSpecView.as_view(), name='loremaster_openapi_spec'),
+    path('loremaster/<str:repo_id>/documentation/', LoremasterDocumentationView.as_view(), name='loremaster_documentation'),
+    path('loremaster/<str:repo_id>/client-snippet/', LoremasterClientSnippetView.as_view(), name='loremaster_client_snippet'),
+
+    # --- LIBRARIAN ENDPOINTS ---
+    path('librarian/ingest/', LibrarianIngestView.as_view(), name='librarian_ingest'),
+    path('librarian/archives/', LibrarianListArchivesView.as_view(), name='librarian_archives'),
+    path('librarian/archives/<str:archive_id>/', LibrarianArchiveDetailView.as_view(), name='librarian_archive_detail'),
+    path('librarian/ask/', LibrarianAskView.as_view(), name='librarian_ask'),
+
 
     # --- MODEL MANAGEMENT ENDPOINT ---
     path('models/list/', ListModelsView.as_view(), name='list_models'),
@@ -28,8 +84,19 @@ urlpatterns = [
      # --- ORACLE (Q&A) ENDPOINT ---
     path('oracle/ask/', OracleView.as_view(), name='oracle_ask'),
 
+    # --- ONBOARDING CONCIERGE ENDPOINTS ---
+    path('expertise/find/', ExpertiseView.as_view(), name='find_experts'),
+    path('onboarding/guide/', OnboardingGuideView.as_view(), name='onboarding_guide'),
+
+    # --- REPOSITORY MANAGEMENT ---
+    path('repositories/', ListRepositoriesView.as_view(), name='repository-list'),
+    path('repositories/<str:repo_id>/', RepositoryDetailView.as_view(), name='repository-detail'),
+    path('repositories/<str:repo_id>/status/', RepositoryStatusView.as_view(), name='repository-status'),
+    path('repositories/<str:repo_id>/api-endpoints/', ApiEndpointInventoryView.as_view(), name='api-endpoint-inventory'),
+
+
     # --- Graph ENDPOINT ---
-    path('graph/', GraphDataView.as_view(), name='graph_data'),
+    path('graph/<str:repo_id>/', GraphDataView.as_view(), name='graph_data'),
 
     # --- "Triage & Strategy" ENDPOINTS ---
     path('issues/list/', IssueListView.as_view(), name='list_issues'),
@@ -51,6 +118,7 @@ urlpatterns = [
     path('review/adjudicate/', AdjudicateView.as_view(), name='adjudicate_pr'),
     path('review/harmonize/', HarmonizeView.as_view(), name='harmonize_pr_fix'),
 
-    # --- SENTINEL ENDPOINT ---
-    path('sentinel/briefing/', SentinelBriefingView.as_view(), name='sentinel_briefing'),
+    # --- SENTINEL ENDPOINTS ---
+    path('sentinel/briefing/<str:repo_id>/', SentinelBriefingView.as_view(), name='sentinel_briefing'),
+    path('sentinel/metrics/<str:repo_id>/', SentinelMetricsHistoryView.as_view(), name='sentinel-metrics-history'),
 ]

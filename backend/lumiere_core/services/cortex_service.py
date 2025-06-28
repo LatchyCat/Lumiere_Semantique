@@ -124,3 +124,183 @@ def get_node_line_map(repo_id: str) -> Dict[str, List[Dict]]:
         return {}
 
     return node_map
+
+
+def get_bom_data(repo_id: str, format_type: str = "json") -> Optional[Dict[str, Any]]:
+    """
+    Get BOM data for a repository with different format options.
+
+    Args:
+        repo_id: Repository identifier
+        format_type: Format type (json, summary, detailed)
+
+    Returns:
+        Dict containing BOM data in requested format or None if not available
+    """
+    try:
+        cortex_data = load_cortex_data(repo_id)
+        bom_data = cortex_data.get('tech_stack_bom')
+
+        if not bom_data:
+            return None
+
+        if format_type == "summary":
+            return {
+                "repo_id": repo_id,
+                "summary": bom_data.get('summary', {}),
+                "primary_ecosystems": list(set(dep.get('ecosystem', 'unknown')
+                                            for deps in bom_data.get('dependencies', {}).values()
+                                            for dep in deps)),
+                "service_count": len(bom_data.get('services', [])),
+                "last_updated": bom_data.get('summary', {}).get('last_updated'),
+                "generation_status": cortex_data.get('bom_generation_status', 'unknown')
+            }
+
+        elif format_type == "detailed":
+            # Add enhanced analysis
+            enhanced_bom = bom_data.copy()
+            enhanced_bom['analysis'] = {
+                'dependency_health': _analyze_dependency_health(bom_data),
+                'security_insights': _generate_security_insights(bom_data),
+                'architecture_patterns': _detect_architecture_patterns(bom_data),
+                'modernization_opportunities': _suggest_modernization(bom_data)
+            }
+            enhanced_bom['repo_id'] = repo_id
+            enhanced_bom['generation_status'] = cortex_data.get('bom_generation_status', 'unknown')
+            return enhanced_bom
+
+        # Default json format
+        bom_data_copy = bom_data.copy()
+        bom_data_copy['repo_id'] = repo_id
+        bom_data_copy['generation_status'] = cortex_data.get('bom_generation_status', 'unknown')
+        return bom_data_copy
+
+    except (CortexFileNotFound, CortexFileMalformed):
+        return None
+
+def has_bom_data(repo_id: str) -> bool:
+    """
+    Check if repository has BOM data available.
+
+    Args:
+        repo_id: Repository identifier
+
+    Returns:
+        True if BOM data exists, False otherwise
+    """
+    try:
+        cortex_data = load_cortex_data(repo_id)
+        return 'tech_stack_bom' in cortex_data
+    except (CortexFileNotFound, CortexFileMalformed):
+        return False
+
+def get_repository_metadata(repo_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get repository metadata including BOM summary if available.
+
+    Args:
+        repo_id: Repository identifier
+
+    Returns:
+        Metadata dictionary or None if repository not found
+    """
+    try:
+        cortex_data = load_cortex_data(repo_id)
+
+        metadata = {
+            'repo_id': repo_id,
+            'has_bom': 'tech_stack_bom' in cortex_data,
+            'bom_status': cortex_data.get('bom_generation_status', 'not_available'),
+            'version': cortex_data.get('version', '1.0.0'),
+            'file_count': len(cortex_data.get('files', []))
+        }
+
+        # Add BOM summary if available
+        if 'bom_summary' in cortex_data:
+            metadata['bom_summary'] = cortex_data['bom_summary']
+        elif 'tech_stack_bom' in cortex_data:
+            bom_data = cortex_data['tech_stack_bom']
+            metadata['bom_summary'] = {
+                'primary_language': bom_data.get('summary', {}).get('primary_language', 'Unknown'),
+                'total_dependencies': bom_data.get('summary', {}).get('total_dependencies', 0),
+                'total_services': bom_data.get('summary', {}).get('total_services', 0),
+                'ecosystems': bom_data.get('summary', {}).get('ecosystems', [])
+            }
+
+        return metadata
+
+    except (CortexFileNotFound, CortexFileMalformed):
+        return None
+
+# Helper functions for BOM analysis
+def _analyze_dependency_health(bom_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Analyze the health of dependencies."""
+    all_deps = []
+    for deps in bom_data.get('dependencies', {}).values():
+        all_deps.extend(deps)
+
+    total_deps = len(all_deps)
+    outdated_count = sum(1 for dep in all_deps if dep.get('deprecated', False))
+
+    return {
+        'total_dependencies': total_deps,
+        'potentially_outdated': outdated_count,
+        'health_score': max(0, 100 - (outdated_count / total_deps * 100)) if total_deps > 0 else 100,
+        'ecosystems': list(set(dep.get('ecosystem', 'unknown') for dep in all_deps))
+    }
+
+def _generate_security_insights(bom_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate security insights from BOM data."""
+    security_analysis = bom_data.get('security_analysis', {})
+    return {
+        'risk_level': 'low',
+        'vulnerable_dependencies': security_analysis.get('high_risk_dependencies', 0),
+        'recommendations': [
+            'Enable automated dependency scanning',
+            'Set up security alerts for new vulnerabilities',
+            'Regularly update dependencies'
+        ]
+    }
+
+def _detect_architecture_patterns(bom_data: Dict[str, Any]) -> List[str]:
+    """Detect architectural patterns from BOM data."""
+    patterns = []
+    services = bom_data.get('services', [])
+    service_types = [s.get('service_type') for s in services]
+
+    if 'database' in service_types and 'cache' in service_types:
+        patterns.append('Caching Layer')
+    if 'message_queue' in service_types:
+        patterns.append('Message-Driven Architecture')
+    if len([s for s in services if s.get('service_type') == 'database']) > 1:
+        patterns.append('Polyglot Persistence')
+    if len(services) > 3:
+        patterns.append('Microservices Architecture')
+
+    return patterns
+
+def _suggest_modernization(bom_data: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Suggest modernization opportunities."""
+    suggestions = []
+    all_deps = []
+    for deps in bom_data.get('dependencies', {}).values():
+        all_deps.extend(deps)
+
+    # Check for outdated frameworks
+    python_deps = [d for d in all_deps if d.get('ecosystem') == 'python']
+    if any(d.get('name') == 'Django' and d.get('version', '').startswith('2.') for d in python_deps):
+        suggestions.append({
+            'type': 'framework_upgrade',
+            'title': 'Upgrade Django to version 4.x',
+            'description': 'Django 2.x is no longer supported. Consider upgrading to Django 4.x for security updates and new features.'
+        })
+
+    # Check for containerization opportunities
+    if not bom_data.get('infrastructure', {}).get('containerized', False):
+        suggestions.append({
+            'type': 'containerization',
+            'title': 'Consider containerizing your application',
+            'description': 'Containerization can improve deployment consistency and scalability.'
+        })
+
+    return suggestions

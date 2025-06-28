@@ -16,7 +16,42 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("faiss").setLevel(logging.WARNING)
 
-class IntelligentCrawler:
+from abc import ABC, abstractmethod
+from typing import Union
+
+class BaseCrawler(ABC):
+    """
+    Abstract base class for all crawlers following the Archetype Evolution principle.
+    Defines the common interface for crawling different data sources.
+    """
+    
+    @abstractmethod
+    def get_file_paths(self, custom_extensions: Optional[List[str]] = None,
+                      custom_excluded_dirs: Optional[Set[str]] = None,
+                      include_hidden: bool = False) -> List[pathlib.Path]:
+        """
+        Scan and return a list of relevant files.
+        Must be implemented by all crawler subclasses.
+        """
+        pass
+    
+    @abstractmethod
+    def get_file_content(self, file_path: str, encoding: str = 'utf-8') -> Optional[str]:
+        """
+        Read the content of a file.
+        Must be implemented by all crawler subclasses.
+        """
+        pass
+    
+    @abstractmethod
+    def cleanup(self):
+        """
+        Clean up resources.
+        Must be implemented by all crawler subclasses.
+        """
+        pass
+
+class GitCrawler(BaseCrawler):
     """
     Clones a Git repository and performs file operations safely.
     Includes path-finding, git blame, and git diff capabilities.
@@ -497,6 +532,87 @@ class IntelligentCrawler:
             error_message = f"Error running 'git blame' on '{target_file}': {e.stderr}"
             logger.error(error_message)
             return f"Error from crawler: {error_message}"
+
+    def get_blame_data_for_file(self, file_path: str) -> List[Dict[str, str]]:
+        """
+        Runs `git blame --line-porcelain` on a specific file and parses the output 
+        for machine processing. Returns structured blame data per line.
+
+        Args:
+            file_path: Path to the file relative to repo root
+
+        Returns:
+            List of dictionaries with blame data for each line, e.g.,
+            [{'commit': '...', 'author': 'J. Doe', 'email': 'j.doe@example.com', 'line_num': 1}, ...]
+        """
+        file_full_path = self.repo_path / file_path
+        if not file_full_path.exists():
+            logger.warning(f"File '{file_path}' does not exist in the repository.")
+            return []
+
+        try:
+            logger.debug(f"Running 'git blame --line-porcelain' on {file_full_path}")
+
+            cmd = ['git', 'blame', '--line-porcelain', str(file_full_path)]
+            result = self._run_git_command(cmd)
+            
+            return self._parse_porcelain_blame(result.stdout)
+
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Error running 'git blame --line-porcelain' on '{file_path}': {e.stderr}")
+            return []
+
+    def _parse_porcelain_blame(self, porcelain_output: str) -> List[Dict[str, str]]:
+        """
+        Parses the --line-porcelain output from git blame into structured data.
+        
+        Args:
+            porcelain_output: Raw output from git blame --line-porcelain
+            
+        Returns:
+            List of dictionaries with blame data for each line
+        """
+        lines = porcelain_output.strip().split('\n')
+        blame_data = []
+        current_entry = {}
+        line_number = 1
+        
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            
+            if not line:
+                i += 1
+                continue
+                
+            # First line of each entry: commit hash, original line number, final line number, group size
+            if re.match(r'^[0-9a-f]{40}', line):
+                # Parse the header line: commit_hash orig_line final_line [group_size]
+                parts = line.split()
+                current_entry = {
+                    'commit': parts[0],
+                    'line_num': line_number
+                }
+                line_number += 1
+                
+            elif line.startswith('author '):
+                current_entry['author'] = line[7:]  # Remove 'author ' prefix
+                
+            elif line.startswith('author-mail '):
+                # Extract email, removing angle brackets
+                email = line[12:].strip()
+                if email.startswith('<') and email.endswith('>'):
+                    email = email[1:-1]
+                current_entry['email'] = email
+                
+            elif line.startswith('\t'):
+                # This is the actual source line, end of this entry
+                blame_data.append(current_entry.copy())
+                current_entry = {}
+                
+            i += 1
+            
+        return blame_data
 
     def get_diff_for_branch(self, ref_name: str, base_ref: str = 'main', stat_only: bool = False) -> str:
         """
@@ -982,3 +1098,291 @@ class IntelligentCrawler:
         """
         all_files = self.get_file_paths()
         return [f for f in all_files if f.suffix.lower() == extension.lower()]
+
+
+class LocalDirectoryCrawler(BaseCrawler):
+    """
+    Crawls a local directory structure for document analysis.
+    Part of the Librarian's Archives feature for universal knowledge management.
+    """
+    
+    # Inherit the same comprehensive file support from GitCrawler
+    DEFAULT_EXCLUDED_DIRS = GitCrawler.DEFAULT_EXCLUDED_DIRS
+    DEFAULT_INCLUDED_EXTENSIONS = GitCrawler.DEFAULT_INCLUDED_EXTENSIONS
+    DEFAULT_SPECIAL_FILES = GitCrawler.DEFAULT_SPECIAL_FILES
+    
+    def __init__(self, directory_path: Union[str, pathlib.Path]):
+        """
+        Initialize the local directory crawler.
+        
+        Args:
+            directory_path: Path to the local directory to crawl
+        """
+        self.directory_path = pathlib.Path(directory_path).resolve()
+        self._file_paths_cache: Optional[List[pathlib.Path]] = None
+        
+        if not self.directory_path.exists():
+            raise ValueError(f"Directory does not exist: {self.directory_path}")
+        
+        if not self.directory_path.is_dir():
+            raise ValueError(f"Path is not a directory: {self.directory_path}")
+        
+        logger.info(f"LocalDirectoryCrawler initialized for: {self.directory_path}")
+    
+    def get_file_paths(self, custom_extensions: Optional[List[str]] = None,
+                      custom_excluded_dirs: Optional[Set[str]] = None,
+                      include_hidden: bool = False) -> List[pathlib.Path]:
+        """
+        Scan the local directory and return a list of relevant files.
+        
+        Args:
+            custom_extensions: Override default file extensions to include
+            custom_excluded_dirs: Override default directories to exclude
+            include_hidden: Whether to include hidden files/directories
+            
+        Returns:
+            List of file paths
+        """
+        # Use custom parameters if provided, otherwise use defaults
+        if custom_extensions is not None or custom_excluded_dirs is not None or include_hidden:
+            # Don't use cache for custom parameters
+            return self._scan_files(custom_extensions, custom_excluded_dirs, include_hidden)
+        
+        if self._file_paths_cache is not None:
+            return self._file_paths_cache
+        
+        logger.info("Scanning local directory for relevant files...")
+        self._file_paths_cache = self._scan_files()
+        logger.info(f"Found and cached {len(self._file_paths_cache)} files to process")
+        return self._file_paths_cache
+    
+    def _scan_files(self, custom_extensions: Optional[List[str]] = None,
+                   custom_excluded_dirs: Optional[Set[str]] = None,
+                   include_hidden: bool = False) -> List[pathlib.Path]:
+        """
+        Internal method to scan files with given parameters.
+        """
+        extensions = custom_extensions if custom_extensions is not None else (
+            self.DEFAULT_INCLUDED_EXTENSIONS + self.DEFAULT_SPECIAL_FILES
+        )
+        excluded_dirs = custom_excluded_dirs if custom_excluded_dirs is not None else self.DEFAULT_EXCLUDED_DIRS
+        
+        files_to_process = []
+        
+        for file_path in self.directory_path.rglob('*'):
+            if not file_path.is_file():
+                continue
+                
+            relative_path = file_path.relative_to(self.directory_path)
+            
+            # Skip hidden files/directories unless explicitly included
+            if not include_hidden and any(part.startswith('.') for part in relative_path.parts):
+                # Allow certain dotfiles that are in our special files list
+                if file_path.name not in self.DEFAULT_SPECIAL_FILES:
+                    continue
+            
+            # Skip excluded directories
+            if any(part in excluded_dirs for part in relative_path.parts):
+                continue
+            
+            # Check against extensions (patterns) and special filenames
+            if any(file_path.match(ext) for ext in extensions):
+                files_to_process.append(file_path)
+        
+        return files_to_process
+    
+    def get_file_content(self, file_path: str, encoding: str = 'utf-8') -> Optional[str]:
+        """
+        Read the content of a file in the directory.
+        
+        Args:
+            file_path: Path to the file relative to directory root
+            encoding: File encoding (default: utf-8)
+            
+        Returns:
+            File content or None if file doesn't exist/can't be read
+        """
+        # Handle both absolute and relative paths
+        if pathlib.Path(file_path).is_absolute():
+            full_path = pathlib.Path(file_path)
+        else:
+            full_path = self.directory_path / file_path
+        
+        try:
+            return full_path.read_text(encoding=encoding)
+        except (FileNotFoundError, UnicodeDecodeError, PermissionError) as e:
+            logger.warning(f"Could not read file '{file_path}': {e}")
+            return None
+    
+    def get_directory_stats(self) -> Dict[str, Union[int, str, List[str], Dict]]:
+        """
+        Get comprehensive statistics about the local directory.
+        
+        Returns:
+            Dictionary with directory statistics
+        """
+        try:
+            files = self.get_file_paths()
+            language_stats = self._get_language_statistics(files)
+            
+            # Count files by extension
+            extensions = {}
+            for file_path in files:
+                ext = file_path.suffix.lower() or 'no_extension'
+                extensions[ext] = extensions.get(ext, 0) + 1
+            
+            # Detect primary language
+            if language_stats:
+                primary_language = max(language_stats.items(), key=lambda x: x[1]['count'])
+                primary_lang_name = primary_language[0]
+                primary_lang_count = primary_language[1]['count']
+            else:
+                primary_lang_name = "Unknown"
+                primary_lang_count = 0
+            
+            return {
+                'total_files': len(files),
+                'primary_language': primary_lang_name,
+                'primary_language_files': primary_lang_count,
+                'language_breakdown': language_stats,
+                'file_extensions': extensions,
+                'directory_path': str(self.directory_path),
+                'supported_languages': len(language_stats),
+                'directory_size_mb': self._get_directory_size() / (1024 * 1024)
+            }
+        except Exception as e:
+            logger.error(f"Error getting directory stats: {e}")
+            return {'error': str(e)}
+    
+    def _get_language_statistics(self, files: List[pathlib.Path]) -> Dict[str, Dict[str, Union[int, List[str]]]]:
+        """
+        Get language statistics for the directory (reusing logic from GitCrawler).
+        """
+        # Language mapping (same as GitCrawler)
+        LANGUAGE_MAP = {
+            '.js': 'JavaScript', '.mjs': 'JavaScript', '.cjs': 'JavaScript',
+            '.jsx': 'JavaScript (React)', '.ts': 'TypeScript', '.tsx': 'TypeScript (React)',
+            '.vue': 'Vue.js', '.svelte': 'Svelte', '.astro': 'Astro',
+            '.html': 'HTML', '.htm': 'HTML', '.css': 'CSS', '.scss': 'SASS',
+            '.sass': 'SASS', '.less': 'LESS', '.styl': 'Stylus',
+            '.py': 'Python', '.pyx': 'Cython', '.pyi': 'Python Interface',
+            '.java': 'Java', '.kt': 'Kotlin', '.scala': 'Scala', '.groovy': 'Groovy',
+            '.cs': 'C#', '.vb': 'Visual Basic .NET', '.fs': 'F#',
+            '.c': 'C', '.cpp': 'C++', '.cxx': 'C++', '.cc': 'C++', '.h': 'C/C++ Header',
+            '.rs': 'Rust', '.go': 'Go', '.swift': 'Swift',
+            '.rb': 'Ruby', '.php': 'PHP', '.pl': 'Perl', '.lua': 'Lua',
+            '.hs': 'Haskell', '.ml': 'OCaml', '.elm': 'Elm', '.ex': 'Elixir',
+            '.erl': 'Erlang', '.clj': 'Clojure', '.scm': 'Scheme', '.lisp': 'Common Lisp',
+            '.r': 'R', '.jl': 'Julia', '.m': 'MATLAB', '.ipynb': 'Jupyter Notebook',
+            '.dart': 'Dart', '.gs': 'Google Apps Script',
+            '.zig': 'Zig', '.nim': 'Nim', '.crystal': 'Crystal', '.d': 'D',
+            '.md': 'Markdown', '.rst': 'reStructuredText', '.tex': 'LaTeX',
+            '.json': 'JSON', '.yaml': 'YAML', '.yml': 'YAML', '.toml': 'TOML',
+            '.xml': 'XML', '.ini': 'INI', '.cfg': 'Config',
+            '.sql': 'SQL', '.graphql': 'GraphQL', '.gql': 'GraphQL',
+            '.sh': 'Shell Script', '.bash': 'Bash', '.zsh': 'Zsh', '.fish': 'Fish',
+            '.ps1': 'PowerShell', '.bat': 'Batch', '.cmd': 'Command Script',
+            '.tf': 'Terraform', '.hcl': 'HCL', '.dockerfile': 'Dockerfile',
+            '.gd': 'GDScript', '.hlsl': 'HLSL', '.glsl': 'GLSL', '.shader': 'Shader',
+            '.sol': 'Solidity', '.move': 'Move', '.cairo': 'Cairo',
+            '.pas': 'Pascal', '.cob': 'COBOL', '.for': 'FORTRAN', '.asm': 'Assembly',
+            'no_extension': 'No Extension'
+        }
+        
+        language_stats = {}
+        
+        for file_path in files:
+            ext = file_path.suffix.lower() or 'no_extension'
+            language = LANGUAGE_MAP.get(ext, f'Unknown ({ext})')
+            
+            if language not in language_stats:
+                language_stats[language] = {
+                    'count': 0,
+                    'extensions': set(),
+                    'examples': []
+                }
+            
+            language_stats[language]['count'] += 1
+            language_stats[language]['extensions'].add(ext)
+            
+            # Add up to 3 example files
+            if len(language_stats[language]['examples']) < 3:
+                relative_path = str(file_path.relative_to(self.directory_path))
+                language_stats[language]['examples'].append(relative_path)
+        
+        # Convert sets to lists for JSON serialization
+        for lang_data in language_stats.values():
+            lang_data['extensions'] = list(lang_data['extensions'])
+        
+        return language_stats
+    
+    def _get_directory_size(self) -> int:
+        """Get total size of the directory in bytes."""
+        total_size = 0
+        try:
+            for file_path in self.directory_path.rglob('*'):
+                if file_path.is_file():
+                    total_size += file_path.stat().st_size
+        except Exception as e:
+            logger.warning(f"Error calculating directory size: {e}")
+        return total_size
+    
+    def find_file_path(self, target_filename: str, case_sensitive: bool = True) -> Union[str, Dict, None]:
+        """
+        Search the directory for a file by its name.
+        
+        Args:
+            target_filename: Name of the file to search for
+            case_sensitive: Whether to perform case-sensitive search
+            
+        Returns:
+            File path, conflict dict with options, or None if not found
+        """
+        logger.info(f"Searching for file matching '{target_filename}'")
+        all_files = self.get_file_paths()
+        
+        possible_matches = []
+        search_name = target_filename if case_sensitive else target_filename.lower()
+        
+        for file_path in all_files:
+            relative_path = file_path.relative_to(self.directory_path)
+            file_name = relative_path.name if case_sensitive else relative_path.name.lower()
+            path_str = str(relative_path) if case_sensitive else str(relative_path).lower()
+            
+            if file_name == search_name or path_str.endswith('/' + search_name):
+                possible_matches.append(relative_path)
+        
+        if not possible_matches:
+            logger.info(f"No match found for '{target_filename}'")
+            return None
+        
+        if len(possible_matches) == 1:
+            match = str(possible_matches[0])
+            logger.info(f"Found unique match: {match}")
+            return match
+        
+        logger.info(f"Found multiple matches, checking for root-level file")
+        root_matches = [p for p in possible_matches if len(p.parts) == 1]
+        
+        if len(root_matches) == 1:
+            match = str(root_matches[0])
+            logger.info(f"Prioritized unique root match: {match}")
+            return match
+        
+        logger.warning(f"Ambiguous path detected for '{target_filename}'")
+        return {
+            "error": "ambiguous_path",
+            "message": f"Multiple files found matching '{target_filename}'. Please specify one.",
+            "options": [str(p) for p in possible_matches]
+        }
+    
+    def cleanup(self):
+        """
+        Clean up resources (no-op for local directory crawler).
+        """
+        logger.info("LocalDirectoryCrawler cleanup completed (no resources to clean)")
+        self._file_paths_cache = None
+
+
+# Backward compatibility - keep the old name as an alias
+IntelligentCrawler = GitCrawler

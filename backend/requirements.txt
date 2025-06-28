@@ -25,6 +25,11 @@ python-dotenv
 typer[all]
 rich
 prompt-toolkit
+fuzzywuzzy[speedup]
+textual>=0.41.0
+textual-dev
+pydantic>=2.0.0
+questionary>=1.10.0
 
 # --- The Crucible service ---
 docker
@@ -34,3 +39,8 @@ google-generativeai
 
 #  --- The Polyglot Cartographer ---
 tree_sitter==0.20.1
+
+# Enhanced BOM Parser Dependencies
+toml
+PyYAML>=6.0                     # For parsing docker-compose.yml files
+dataclasses-json>=0.5.7         # For enhanced dataclass serialization (Python < 3.7)

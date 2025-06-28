@@ -1316,39 +1316,162 @@ class OracleService:
         self.search_orchestrator = SearchOrchestrator(self.config)
         self.context_builder = ContextBuilder(self.config)
         self.entity_extractor = EntityExtractor(self.config)
+    
+    def _load_data(self, repo_or_archive_id: str, is_archive: bool) -> Dict[str, Any]:
+        """
+        Load cortex data for either a repository or archive.
+        
+        Args:
+            repo_or_archive_id: ID of the repo or archive
+            is_archive: Whether this is an archive or repository
+            
+        Returns:
+            Cortex data dictionary
+            
+        Raises:
+            Exception: If loading fails
+        """
+        if is_archive:
+            # Load from local_archives directory
+            from pathlib import Path
+            backend_dir = Path(__file__).resolve().parent.parent.parent
+            archives_dir = backend_dir / "local_archives"
+            cortex_path = archives_dir / repo_or_archive_id / f"{repo_or_archive_id}_cortex.json"
+            
+            if not cortex_path.exists():
+                raise cortex_service.CortexFileNotFound(f"Archive cortex file not found: {cortex_path}")
+            
+            try:
+                import json
+                with open(cortex_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except json.JSONDecodeError:
+                raise cortex_service.CortexFileMalformed(f"Archive cortex file is corrupted: {cortex_path}")
+        else:
+            # Use existing cortex service for repositories
+            return cortex_service.load_cortex_data(repo_or_archive_id)
+    
+    def _answer_question_simple_rag(self, archive_id: str, question: str, cortex_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Answer questions for archives using simplified RAG (no architectural graph).
+        
+        Args:
+            archive_id: Archive identifier
+            question: User question
+            cortex_data: Cortex data for the archive
+            
+        Returns:
+            Answer response dictionary
+        """
+        try:
+            # Use basic RAG search without graph analysis
+            chunks = ollama.search_index(
+                query=question,
+                repo_id=archive_id,
+                artifact_type='archive'  # Tell ollama to look in local_archives
+            )
+            
+            if not chunks:
+                return {
+                    "answer": "I couldn't find any relevant information in this archive to answer your question.",
+                    "confidence_score": 0.1,
+                    "source_chunks": [],
+                    "archive_id": archive_id,
+                    "search_strategy": "simple_rag"
+                }
+            
+            # Build context from chunks
+            context_parts = []
+            source_info = []
+            
+            for chunk in chunks[:5]:  # Use top 5 chunks
+                content = chunk.get('content', '')
+                file_path = chunk.get('file_path', 'unknown')
+                score = chunk.get('score', 0.0)
+                
+                if content.strip():
+                    context_parts.append(f"From {file_path}:\n{content}")
+                    source_info.append({
+                        "file_path": file_path,
+                        "similarity_score": score,
+                        "chunk_preview": content[:200] + "..." if len(content) > 200 else content
+                    })
+            
+            context = "\n\n".join(context_parts)
+            
+            # Generate answer using LLM
+            prompt = f"""Based on the following information from a document archive, please answer the user's question.
 
-    def answer_question(self, repo_id: str, question: str,
+Archive Content:
+{context}
+
+User Question: {question}
+
+Please provide a helpful and accurate answer based on the provided content. If the content doesn't contain enough information to answer the question fully, please say so and suggest what additional information might be needed."""
+
+            answer = llm_service.generate_text(prompt, task_type=TaskType.ANALYSIS)
+            
+            # Calculate confidence based on chunk scores
+            avg_score = sum(chunk.get('score', 0.0) for chunk in chunks[:5]) / len(chunks[:5]) if chunks else 0.0
+            confidence = min(0.9, max(0.3, avg_score))
+            
+            return {
+                "answer": answer,
+                "confidence_score": confidence,
+                "source_chunks": source_info,
+                "archive_id": archive_id,
+                "search_strategy": "simple_rag",
+                "archive_metadata": cortex_data.get("archive_metadata", {})
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in simple RAG for archive {archive_id}: {e}")
+            return {
+                "error": f"Failed to process question for archive: {str(e)}",
+                "archive_id": archive_id
+            }
+
+    def answer_question(self, repo_or_archive_id: str, question: str,
                        use_enhanced_rag: bool = True) -> Dict[str, Any]:
         """
         Main entry point for answering questions with enhanced RAG.
+        Supports both repositories and archives (Librarian's Archives feature).
         Maintains backward compatibility while adding advanced features.
         """
         # Input validation
-        if not repo_id or not isinstance(repo_id, str):
-            return {"error": "Invalid repository ID provided"}
+        if not repo_or_archive_id or not isinstance(repo_or_archive_id, str):
+            return {"error": "Invalid repository/archive ID provided"}
 
         if not question or not isinstance(question, str):
             return {"error": "Invalid question provided"}
 
-        logger.info(f"The Oracle received a question for repo '{repo_id}': '{question}'")
+        # Determine if this is a repository or archive
+        is_archive = repo_or_archive_id.startswith('archive_')
+        data_type = "archive" if is_archive else "repository"
+        
+        logger.info(f"The Oracle received a question for {data_type} '{repo_or_archive_id}': '{question}'")
 
-        # Load repository data
+        # Load repository/archive data
         try:
-            cortex_data = cortex_service.load_cortex_data(repo_id)
+            cortex_data = self._load_data(repo_or_archive_id, is_archive)
             if not isinstance(cortex_data, dict):
                 return {"error": "Invalid cortex data format"}
 
             graph_data = cortex_data.get("architectural_graph")
             if not graph_data:
-                return {"error": "Architectural graph not found for this repository."}
+                if is_archive:
+                    # Archives may not have architectural graphs - use simplified RAG
+                    return self._answer_question_simple_rag(repo_or_archive_id, question, cortex_data)
+                else:
+                    return {"error": "Architectural graph not found for this repository."}
 
         except cortex_service.CortexFileNotFound:
-            return {"error": f"Cortex file for repo '{repo_id}' not found. Please ingest the repo first."}
+            return {"error": f"Cortex file for {data_type} '{repo_or_archive_id}' not found. Please ingest it first."}
         except cortex_service.CortexFileMalformed:
-            return {"error": f"Cortex file for repo '{repo_id}' is corrupted. Please re-ingest the repo."}
+            return {"error": f"Cortex file for {data_type} '{repo_or_archive_id}' is corrupted. Please re-ingest it."}
         except Exception as e:
-            logger.error(f"Error loading cortex data for repo {repo_id}: {e}")
-            return {"error": "Failed to load repository data. Please try again later."}
+            logger.error(f"Error loading cortex data for {data_type} {repo_or_archive_id}: {e}")
+            return {"error": f"Failed to load {data_type} data. Please try again later."}
 
         # Build graph
         try:
