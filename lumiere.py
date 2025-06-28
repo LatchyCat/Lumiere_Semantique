@@ -2623,7 +2623,7 @@ def run():
                 try:
                     command = prompt_session.prompt(prompt_text).strip()
                 except KeyboardInterrupt:
-                    result = prompt_session.app.result
+                    result = getattr(prompt_session.app, 'result', None)
                     if result == 'dashboard':
                         command = 'dashboard'
                     elif result == 'help':
@@ -2633,6 +2633,7 @@ def run():
                     elif result == 'repo-mgmt':
                         command = 'repo-mgmt'
                     else:
+                        command = 'exit' # Default to exit on direct Ctrl+C
                         continue
             else:
                 command = next_command
